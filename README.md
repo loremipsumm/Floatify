@@ -1,81 +1,81 @@
 # Spotify Lyrics Float
 
-Jendela lirik mengambang untuk **aplikasi Spotify desktop di Windows**. Spotify boleh di-minimize; liriknya tetap tampil di atas aplikasi lain, tersinkron dengan lagu yang sedang diputar.
+A floating lyrics window for the **Spotify desktop app on Windows**. Minimize Spotify and the lyrics stay on top of your other apps, in sync with the song that's playing.
 
 ```
- Judul Lagu  —  Artis
-        baris sebelumnya
-   BARIS YANG SEDANG DINYANYIKAN
-        baris berikutnya
+ Song Title  —  Artist
+        previous line
+     LINE BEING SUNG NOW
+          next line
 ```
 
-## Cara kerja
+## How it works
 
-| Bagian | Sumber | Catatan |
+| Part | Source | Notes |
 |---|---|---|
-| Lagu + posisi detik | **Windows Media Control (SMTC)**, sama dengan media flyout di Windows | Tanpa login, tanpa API key, tanpa Premium |
-| Lirik | **[LRCLIB](https://lrclib.net)**, database lirik terbuka dengan timestamp (LRC) | Gratis, tanpa API key |
-| Tampilan | WPF (.NET 10), tema *liquid glass*: blur asli dari latar belakang (DWM), tint, kilau dan pinggiran mengkilap | Selalu di atas, tidak muncul di taskbar/Alt+Tab, tidak mencuri fokus |
+| Track + playback position | **Windows Media Control (SMTC)**, the same source as the Windows media flyout | No login, no API key, no Premium needed |
+| Lyrics | **[LRCLIB](https://lrclib.net)**, an open database of time-stamped (LRC) lyrics | Free, no API key |
+| Display | WPF (.NET 10) with a *liquid glass* theme: real backdrop blur (DWM), tint, sheen and a specular rim | Always on top, hidden from the taskbar and Alt+Tab, never steals focus |
 
-Spotify hanya mengirim posisi lagu sekitar tiap 4–5 detik, jadi posisi di antaranya dihitung sendiri (`PlaybackClock`). Lirik diambil saat runtime lalu di-cache di komputer, jadi tidak ada lirik yang dibundel di dalam aplikasi.
+Spotify only reports its playback position every 4–5 seconds, so the position in between is extrapolated (`PlaybackClock`). Lyrics are fetched at runtime and cached locally; no lyrics are bundled with the app.
 
-## Menjalankan
+## Running
 
-**Kebutuhan:** Windows 10 (2004+) / 11, [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (sudah termasuk kalau .NET 10 SDK terpasang).
+**Requirements:** Windows 10 (2004+) or 11, and the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (included with the .NET 10 SDK).
 
-- **Pakai saja:** jalankan `publish\SpotifyLyricsFloat.exe`.
-- **Build ulang `.exe`:** jalankan `publish.cmd`.
-- **Mode development:** `dotnet run --project src\LyricsFloat.App`
-- **Test:** `dotnet test`
+- **Just use it:** run `publish\SpotifyLyricsFloat.exe`.
+- **Rebuild the `.exe`:** run `publish.cmd`.
+- **Development:** `dotnet run --project src\LyricsFloat.App`
+- **Tests:** `dotnet test`
 
-## Pemakaian
+## Usage
 
-- **Geser** jendela dengan klik-tahan di bagian tengah.
-- **Resize** dengan menarik sisi atau sudut mana saja. Tinggi jendela menentukan ukuran teks, lebarnya menentukan panjang baris.
-- **Arahkan mouse** ke jendela untuk memunculkan tombol:
-  - `−` / `+` : geser sinkron lirik ±0,25 detik (disimpan per lagu)
-  - 🔒 : **kunci & tembus klik**. Jendela tidak bisa diklik lagi, jadi klik diteruskan ke aplikasi di belakangnya
-  - ✕ : sembunyikan
-- **Membuka kunci:** arahkan kursor ke lirik, lalu klik tombol **Buka kunci** yang muncul di kanan atas. Bisa juga lewat `Ctrl+Alt+L` atau menu tray.
-- Lirik **bergulir halus**: baris berikutnya naik dan membesar jadi baris aktif. Saat ganti lagu atau seek, lirik berganti dengan fade.
-- **Ikon tray** (♪ ungu): tampilkan/sembunyikan, kunci, warna kaca (Bening/Tipis/Sedang/Gelap), reset posisi, jalankan saat Windows mulai, keluar.
+- **Move** the window by clicking and dragging its middle.
+- **Resize** by dragging any edge or corner. The window height sets the text size; the width sets how long a line can be.
+- **Hover** over the window to show its controls:
+  - `−` / `+` : shift the lyrics timing by ±0.25 s (remembered per song)
+  - 🔒 : **lock & click-through**. The window stops taking clicks and passes them to whatever is behind it
+  - ✕ : hide the window
+- **Unlocking:** hover over the lyrics and click the **Buka kunci** (Unlock) button that appears at the top right. `Ctrl+Alt+L` and the tray menu work too.
+- Lyrics **scroll smoothly**: the next line rises and grows into the current one. Track changes and seeks crossfade instead.
+- **Tray icon** (purple ♪): show/hide, lock, glass tint (Bening/Tipis/Sedang/Gelap, i.e. clear to dark), reset position, start with Windows, and quit.
 
-### Reconnect saat koneksi bermasalah
+### Reconnecting after connection problems
 
-Kalau lirik gagal dimuat karena internet terputus atau server LRCLIB sedang error, aplikasi tidak menyerah:
+When lyrics can't be loaded because the internet is down or the LRCLIB server is having trouble, the app keeps trying:
 
-- **Mencoba lagi otomatis** selama lagunya masih sama, dengan jeda 3 → 5 → 10 → 20 → 30 detik (lalu tiap 30 detik). Kalau server meminta menunggu (`Retry-After`), permintaan itu diikuti, maksimal 5 menit.
-- **Langsung tersambung lagi** begitu jaringan Windows berubah, misalnya WiFi tersambung kembali.
-- Jendela menampilkan penyebabnya (**"Koneksi internet terputus"** atau **"Server lirik sedang sibuk"**), hitungan mundur, dan tombol **Coba sekarang**.
-- Saat jendela terkunci, gunakan menu tray **Hubungkan ulang sekarang**.
+- **Retries automatically** for as long as the same song is playing, waiting 3 → 5 → 10 → 20 → 30 seconds between attempts (then every 30 seconds). If the server asks for a longer wait (`Retry-After`), it is honored, up to 5 minutes.
+- **Reconnects right away** when the Windows network changes, for example when Wi-Fi comes back.
+- The window shows the cause (**"Koneksi internet terputus"**, no internet connection, or **"Server lirik sedang sibuk"**, lyrics server busy), a countdown, and a **Coba sekarang** (Try now) button.
+- While the window is locked, use the **Hubungkan ulang sekarang** (Reconnect now) tray menu item.
 
-Kegagalan koneksi tidak disimpan ke cache, jadi lagu yang sempat gagal akan dicoba lagi saat diputar berikutnya.
+Connection failures are never cached, so a song that failed is looked up again the next time it plays.
 
-| Shortcut | Fungsi |
+| Shortcut | Action |
 |---|---|
-| `Ctrl+Alt+L` | Nyalakan/matikan kunci & tembus klik |
-| `Ctrl+Alt+K` | Tampilkan/sembunyikan jendela |
+| `Ctrl+Alt+L` | Toggle lock & click-through |
+| `Ctrl+Alt+K` | Show/hide the window |
 
 ## Data
 
-Semua tersimpan di `%LOCALAPPDATA%\SpotifyLyricsFloat\`:
+Everything is stored in `%LOCALAPPDATA%\SpotifyLyricsFloat\`:
 
-- `settings.json`: posisi, ukuran, warna kaca, status kunci, offset per lagu
-- `lyrics\`: cache lirik (lagu yang liriknya tidak ditemukan dicoba lagi setelah 1 hari)
-- `app.log`: log untuk debugging
+- `settings.json`: position, size, glass tint, lock state, per-song timing offsets
+- `lyrics\`: lyrics cache (songs with no lyrics found are looked up again after a day)
+- `app.log`: log for troubleshooting
 
-## Keterbatasan
+## Limitations
 
-- Hanya membaca Spotify **desktop** di PC ini, bukan Spotify yang diputar di HP atau web player.
-- Tidak semua lagu ada di LRCLIB. Kalau hanya ada lirik tanpa timestamp, baris disebar rata sepanjang lagu dan header menampilkan "tanpa sinkron".
-- Iklan Spotify Free dideteksi dengan heuristik (artis kosong atau "Spotify").
-- Jendela overlay tidak bisa tampil di atas game *exclusive fullscreen* (mode borderless/windowed aman).
+- Only reads the Spotify **desktop** app on this PC, not Spotify playing on a phone or in the web player.
+- Not every song is on LRCLIB. When only untimed lyrics exist, the lines are spread evenly across the song and the header shows "tanpa sinkron" (unsynced).
+- Spotify Free ads are detected heuristically (an empty artist, or "Spotify" as the artist).
+- The overlay can't appear on top of games in *exclusive fullscreen* (borderless and windowed modes are fine).
 
-## Struktur
+## Project structure
 
 ```
-src/LyricsFloat.Core/     logika murni: parser LRC, timeline, clock, client LRCLIB, cache
-src/LyricsFloat.App/      aplikasi WPF: jendela, SMTC watcher, tray, hotkey, settings
+src/LyricsFloat.Core/     pure logic: LRC parser, timeline, clock, LRCLIB client, cache, retry policy
+src/LyricsFloat.App/      WPF app: window, SMTC watcher, tray, hotkeys, settings
 tests/LyricsFloat.Core.Tests/
-tools/SmtcProbe/          alat diagnosa: tampilkan data SMTC Spotify  (dotnet run --project tools\SmtcProbe -- 10)
+tools/SmtcProbe/          diagnostic tool that prints Spotify's SMTC data  (dotnet run --project tools\SmtcProbe -- 10)
 ```
