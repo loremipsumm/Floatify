@@ -1,0 +1,190 @@
+<Window x:Class="LyricsFloat.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:LyricsFloat.App"
+        Title="Spotify Lyrics Float"
+        Width="560" Height="165" MinWidth="300" MinHeight="120"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="CanResize" Topmost="True" ShowInTaskbar="False" ShowActivated="False"
+        WindowStartupLocation="Manual"
+        FontFamily="Segoe UI Variable Display, Segoe UI"
+        UseLayoutRounding="True"
+        MouseLeftButtonDown="OnMouseLeftButtonDown"
+        MouseEnter="OnMouseEnter"
+        MouseLeave="OnMouseLeave">
+
+    <!-- Borderless but resizable from every edge; the corner radius also clips the backdrop blur. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="8" CornerRadius="24"
+                      GlassFrameThickness="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <DropShadowEffect x:Key="TextShadow" BlurRadius="8" ShadowDepth="0" Opacity="0.45" Color="Black" />
+
+        <Style x:Key="Lyric" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="TextAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Effect" Value="{StaticResource TextShadow}" />
+        </Style>
+
+        <Style x:Key="GlassButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Background" Value="#1AFFFFFF" />
+            <Setter Property="BorderBrush" Value="#40FFFFFF" />
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" CornerRadius="11" BorderThickness="1"
+                                Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#38FFFFFF" />
+                                <Setter TargetName="Bg" Property="BorderBrush" Value="#73FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#55FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <!-- Liquid glass: blurred backdrop (enabled from code), a tint, and light playing on the surface -->
+        <Border CornerRadius="24">
+            <Border.Background>
+                <SolidColorBrush x:Name="TintBrush" Color="#0A0A14" Opacity="0.18" />
+            </Border.Background>
+        </Border>
+        <Border CornerRadius="24" IsHitTestVisible="False">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#2EFFFFFF" Offset="0" />
+                    <GradientStop Color="#0DFFFFFF" Offset="0.4" />
+                    <GradientStop Color="#05FFFFFF" Offset="0.7" />
+                    <GradientStop Color="#14FFFFFF" Offset="1" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+        <!-- Specular rim: bright where the light hits (top-left), fainter on the far edge -->
+        <Border CornerRadius="24" BorderThickness="1" IsHitTestVisible="False">
+            <Border.BorderBrush>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#D9FFFFFF" Offset="0" />
+                    <GradientStop Color="#40FFFFFF" Offset="0.3" />
+                    <GradientStop Color="#14FFFFFF" Offset="0.6" />
+                    <GradientStop Color="#66FFFFFF" Offset="1" />
+                </LinearGradientBrush>
+            </Border.BorderBrush>
+        </Border>
+        <!-- Inner edge shade gives the glass some thickness -->
+        <Border CornerRadius="23" Margin="1" BorderThickness="1" BorderBrush="#1F000000" IsHitTestVisible="False" />
+
+        <Grid Margin="22,10,22,14">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="26" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Header: track info, plus controls while hovered -->
+            <Grid x:Name="HeaderRow">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="LockIndicator" Grid.Column="0" Text="&#xE72E;"
+                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11"
+                           Foreground="#B3FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0"
+                           Visibility="Collapsed" />
+
+                <TextBlock x:Name="TrackText" Grid.Column="1" FontSize="12" Foreground="#D9FFFFFF"
+                           FontFamily="Segoe UI Variable Text, Segoe UI"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                           Effect="{StaticResource TextShadow}" />
+
+                <StackPanel x:Name="Toolbar" Grid.Column="2" Orientation="Horizontal" Margin="8,0,-6,0"
+                            Visibility="Collapsed">
+                    <Button Style="{StaticResource GlassButton}" Content="&#xE738;" Click="OnOffsetDown"
+                            ToolTip="Lirik lebih lambat (−0,25 detik)" />
+                    <TextBlock x:Name="OffsetText" Width="42" FontSize="11" Foreground="#E6FFFFFF"
+                               FontFamily="Segoe UI Variable Text, Segoe UI"
+                               TextAlignment="Center" VerticalAlignment="Center"
+                               ToolTip="Koreksi sinkron untuk lagu ini" />
+                    <Button Style="{StaticResource GlassButton}" Content="&#xE710;" Click="OnOffsetUp"
+                            ToolTip="Lirik lebih cepat (+0,25 detik)" />
+                    <Button Style="{StaticResource GlassButton}" Content="&#xE72E;" Click="OnLockClick" Margin="8,0,2,0"
+                            ToolTip="Kunci &amp; tembus klik (buka: arahkan kursor ke lirik, atau Ctrl+Alt+L)" />
+                    <Button Style="{StaticResource GlassButton}" Content="&#xE711;" Click="OnHideClick"
+                            ToolTip="Sembunyikan (tampilkan lagi: ikon tray atau Ctrl+Alt+K)" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Three lines: previous, current, next. Row ratios match LyricsHeightInLines in code. -->
+            <Grid x:Name="LyricsArea" Grid.Row="1" ClipToBounds="True" SizeChanged="OnLyricsAreaSizeChanged">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1.05*" />
+                    <RowDefinition Height="2.5*" />
+                    <RowDefinition Height="1.05*" />
+                </Grid.RowDefinitions>
+
+                <!-- Carries the line that scrolls out of view -->
+                <TextBlock x:Name="GhostLine" Grid.Row="0" Style="{StaticResource Lyric}" Opacity="0" />
+                <TextBlock x:Name="PrevLine" Grid.Row="0" Style="{StaticResource Lyric}" Opacity="0" />
+                <TextBlock x:Name="CurrentLine" Grid.Row="1" Style="{StaticResource Lyric}" Opacity="0"
+                           TextWrapping="Wrap" LineStackingStrategy="BlockLineHeight" />
+                <TextBlock x:Name="NextLine" Grid.Row="2" Style="{StaticResource Lyric}" Opacity="0" />
+
+                <!-- Shown while a failed lookup waits to reconnect -->
+                <StackPanel x:Name="RetryPanel" Grid.Row="2" Orientation="Horizontal"
+                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                    <TextBlock x:Name="RetryText" FontSize="12" Foreground="#CCFFFFFF"
+                               FontFamily="Segoe UI Variable Text, Segoe UI" VerticalAlignment="Center"
+                               Effect="{StaticResource TextShadow}" />
+                    <Button x:Name="RetryButton" Style="{StaticResource GlassButton}" Width="NaN" Height="24"
+                            Padding="10,0" Margin="10,0,0,0" FontFamily="Segoe UI Variable Text, Segoe UI"
+                            FontSize="12" Click="OnRetryClick" ToolTip="Hubungkan ulang sekarang">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="Coba sekarang" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <!-- Shown while locked and hovered. A popup is its own window, so it stays clickable. -->
+        <Popup x:Name="UnlockPopup" AllowsTransparency="True" PopupAnimation="Fade" StaysOpen="True"
+               Placement="Relative" PlacementTarget="{Binding ElementName=HeaderRow}">
+            <Button Style="{StaticResource GlassButton}" Width="{x:Static local:MainWindow.UnlockPillWidth}"
+                    Height="{x:Static local:MainWindow.UnlockPillHeight}"
+                    Background="#E01C1C26" BorderBrush="#66FFFFFF"
+                    FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12" Click="OnUnlockClick">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE785;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                               VerticalAlignment="Center" Margin="0,0,7,0" />
+                    <TextBlock Text="Buka kunci" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </Popup>
+    </Grid>
+</Window>

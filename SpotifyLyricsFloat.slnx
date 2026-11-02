@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LyricsFloat.App/LyricsFloat.App.csproj" />
+    <Project Path="src/LyricsFloat.Core/LyricsFloat.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LyricsFloat.Core.Tests/LyricsFloat.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/SmtcProbe/SmtcProbe.csproj" />
+  </Folder>
+</Solution>
