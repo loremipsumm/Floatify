@@ -16,10 +16,13 @@ public sealed class AppSettings
     public double? Left { get; set; }
     public double? Top { get; set; }
     public double Width { get; set; } = 560;
-    public double Height { get; set; } = 165;
+    public double Height { get; set; } = 256;
 
-    /// <summary>How dark the glass is tinted over the blurred backdrop, 0 (clear) to 1.</summary>
-    public double GlassTint { get; set; } = 0.18;
+    /// <summary>How see-through the overlay is, 0 (solid) to 1 (clear).</summary>
+    public double Transparency { get; set; } = 0.35;
+
+    /// <summary>Size of the current lyric line; resizing the window no longer changes it.</summary>
+    public double TextSize { get; set; } = 28;
 
     public bool ClickThrough { get; set; }
 

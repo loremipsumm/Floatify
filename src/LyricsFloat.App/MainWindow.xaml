@@ -3,186 +3,491 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:LyricsFloat.App"
         Title="Spotify Lyrics Float"
-        Width="560" Height="165" MinWidth="300" MinHeight="120"
+        Width="560" Height="256" MinWidth="340" MinHeight="150"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ResizeMode="CanResize" Topmost="True" ShowInTaskbar="False" ShowActivated="False"
         WindowStartupLocation="Manual"
-        FontFamily="Segoe UI Variable Display, Segoe UI"
+        FontFamily="SF Pro Display, SF Pro Text, Segoe UI Variable Display, Segoe UI"
         UseLayoutRounding="True"
         MouseLeftButtonDown="OnMouseLeftButtonDown"
         MouseEnter="OnMouseEnter"
         MouseLeave="OnMouseLeave">
 
-    <!-- Borderless but resizable from every edge; the corner radius also clips the backdrop blur. -->
+    <!-- Borderless but resizable from every edge. Corners are rounded by Windows 11 (DWM), which also
+         clips the frosted blur; the card uses the same 8 px radius so the two edges coincide. -->
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="0" ResizeBorderThickness="8" CornerRadius="24"
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="8" CornerRadius="0"
                       GlassFrameThickness="0" UseAeroCaptionButtons="False" />
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <DropShadowEffect x:Key="TextShadow" BlurRadius="8" ShadowDepth="0" Opacity="0.45" Color="Black" />
+        <!-- Apple dark-mode palette: label colours are white at decreasing opacity -->
+        <SolidColorBrush x:Key="Label" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="SecondaryLabel" Color="#99EBEBF5" />
+        <SolidColorBrush x:Key="Separator" Color="#1FFFFFFF" />
+        <SolidColorBrush x:Key="SystemPink" Color="#FF375F" />
+        <FontFamily x:Key="Icons">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+        <FontFamily x:Key="TextFont">SF Pro Text, Segoe UI Variable Text, Segoe UI</FontFamily>
 
-        <Style x:Key="Lyric" TargetType="TextBlock">
+        <Style TargetType="ToolTip">
             <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="TextAlignment" Value="Center" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Effect" Value="{StaticResource TextShadow}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontFamily" Value="{StaticResource TextFont}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="#F22C2C2E" BorderBrush="#26FFFFFF" BorderThickness="1"
+                                CornerRadius="8" Padding="9,5">
+                            <ContentPresenter />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
-        <Style x:Key="GlassButton" TargetType="Button">
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="Background" Value="#1AFFFFFF" />
-            <Setter Property="BorderBrush" Value="#40FFFFFF" />
-            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="Width" Value="26" />
-            <Setter Property="Height" Value="22" />
-            <Setter Property="Margin" Value="2,0" />
+        <Style x:Key="Lyric" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Label}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="TextAlignment" Value="Left" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
+
+        <!-- Round icon button: a soft circle fades in on hover, springs back after a press -->
+        <Style x:Key="RoundButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Label}" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="FontFamily" Value="{StaticResource Icons}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bg" CornerRadius="11" BorderThickness="1"
-                                Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}">
+                        <Border x:Name="Bg" CornerRadius="14" BorderThickness="1" BorderBrush="{TemplateBinding BorderBrush}"
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.Background>
+                                <SolidColorBrush x:Name="BgBrush" Color="#00FFFFFF" />
+                            </Border.Background>
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="Press" />
+                            </Border.RenderTransform>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
                                               Margin="{TemplateBinding Padding}" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#38FFFFFF" />
-                                <Setter TargetName="Bg" Property="BorderBrush" Value="#73FFFFFF" />
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <ColorAnimation Storyboard.TargetName="BgBrush" Storyboard.TargetProperty="Color"
+                                                            To="#24FFFFFF" Duration="0:0:0.18" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <ColorAnimation Storyboard.TargetName="BgBrush" Storyboard.TargetProperty="Color"
+                                                            To="#00FFFFFF" Duration="0:0:0.3" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#55FFFFFF" />
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Press" Storyboard.TargetProperty="ScaleX"
+                                                             To="0.85" Duration="0:0:0.1" />
+                                            <DoubleAnimation Storyboard.TargetName="Press" Storyboard.TargetProperty="ScaleY"
+                                                             To="0.85" Duration="0:0:0.1" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Press" Storyboard.TargetProperty="ScaleX"
+                                                             To="1" Duration="0:0:0.5">
+                                                <DoubleAnimation.EasingFunction>
+                                                    <ElasticEase Oscillations="1" Springiness="6" EasingMode="EaseOut" />
+                                                </DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                            <DoubleAnimation Storyboard.TargetName="Press" Storyboard.TargetProperty="ScaleY"
+                                                             To="1" Duration="0:0:0.5">
+                                                <DoubleAnimation.EasingFunction>
+                                                    <ElasticEase Oscillations="1" Springiness="6" EasingMode="EaseOut" />
+                                                </DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.35" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Slider in the macOS style: thin track, white fill, round white knob -->
+        <Style x:Key="SliderFill" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Height="4" CornerRadius="2" Background="White" VerticalAlignment="Center" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SliderRest" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="AppleSlider" TargetType="Slider">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsMoveToPointEnabled" Value="True" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Height="22">
+                            <Border Height="4" CornerRadius="2" Background="#3DFFFFFF" VerticalAlignment="Center" />
+                            <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource SliderFill}" Command="Slider.DecreaseLarge" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource SliderRest}" Command="Slider.IncreaseLarge" />
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse Width="18" Height="18" Fill="White">
+                                                    <Ellipse.Effect>
+                                                        <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.35" />
+                                                    </Ellipse.Effect>
+                                                </Ellipse>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Capsule button with a hairline border and a text label -->
+        <Style x:Key="CapsuleButton" TargetType="Button" BasedOn="{StaticResource RoundButton}">
+            <Setter Property="BorderBrush" Value="#33FFFFFF" />
+            <Setter Property="FontFamily" Value="{StaticResource TextFont}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Width" Value="NaN" />
+            <Setter Property="Padding" Value="12,0" />
+        </Style>
     </Window.Resources>
 
-    <Grid>
-        <!-- Liquid glass: blurred backdrop (enabled from code), a tint, and light playing on the surface -->
-        <Border CornerRadius="24">
+    <Grid x:Name="Root" SizeChanged="OnRootSizeChanged">
+        <!-- Backdrop: the album art blown up into soft colour (decoded tiny, scaled up smoothly).
+             Upscaling fades the image's own edges to transparent, so it is drawn larger than the
+             card and those faded edges fall outside the clip. -->
+        <Image x:Name="ArtBackdrop" Stretch="UniformToFill" Opacity="0" IsHitTestVisible="False"
+               RenderOptions.BitmapScalingMode="HighQuality" RenderTransformOrigin="0.5,0.5">
+            <Image.RenderTransform>
+                <ScaleTransform ScaleX="1.4" ScaleY="1.4" />
+            </Image.RenderTransform>
+        </Image>
+
+        <!-- Liquid glass: frosted desktop blur (enabled from code) under a dark tint that the
+             transparency setting thins out, with light playing across the surface -->
+        <Border CornerRadius="8">
             <Border.Background>
-                <SolidColorBrush x:Name="TintBrush" Color="#0A0A14" Opacity="0.18" />
+                <SolidColorBrush x:Name="MaterialBrush" Color="#121214" Opacity="0.6" />
             </Border.Background>
         </Border>
-        <Border CornerRadius="24" IsHitTestVisible="False">
+        <Border CornerRadius="8" IsHitTestVisible="False">
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                     <GradientStop Color="#2EFFFFFF" Offset="0" />
-                    <GradientStop Color="#0DFFFFFF" Offset="0.4" />
+                    <GradientStop Color="#0DFFFFFF" Offset="0.38" />
                     <GradientStop Color="#05FFFFFF" Offset="0.7" />
                     <GradientStop Color="#14FFFFFF" Offset="1" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
-        <!-- Specular rim: bright where the light hits (top-left), fainter on the far edge -->
-        <Border CornerRadius="24" BorderThickness="1" IsHitTestVisible="False">
-            <Border.BorderBrush>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                    <GradientStop Color="#D9FFFFFF" Offset="0" />
-                    <GradientStop Color="#40FFFFFF" Offset="0.3" />
-                    <GradientStop Color="#14FFFFFF" Offset="0.6" />
-                    <GradientStop Color="#66FFFFFF" Offset="1" />
-                </LinearGradientBrush>
-            </Border.BorderBrush>
-        </Border>
-        <!-- Inner edge shade gives the glass some thickness -->
-        <Border CornerRadius="23" Margin="1" BorderThickness="1" BorderBrush="#1F000000" IsHitTestVisible="False" />
 
-        <Grid Margin="22,10,22,14">
+
+        <!-- Equal padding above the header and below the scrubber -->
+        <Grid Margin="16,14,16,14">
             <Grid.RowDefinitions>
-                <RowDefinition Height="26" />
+                <RowDefinition Height="36" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <!-- Header: track info, plus controls while hovered -->
-            <Grid x:Name="HeaderRow">
+            <!-- Lyrics: a scrolling list behind the header and scrubber. As many lines show as the window
+                 height allows (at least three); they fade out towards the top and bottom edges. -->
+            <!-- The fade lives on this wrapper, not on the clipped list inside: a mask on the list itself
+                 would be sized to the whole (much taller) list rather than the visible area. -->
+            <Border Grid.RowSpan="3" Margin="0,-14" Background="Transparent">
+                <Border.OpacityMask>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="Transparent" Offset="0" />
+                        <GradientStop Color="Black" Offset="0.08" />
+                        <GradientStop Color="Black" Offset="0.92" />
+                        <GradientStop Color="Transparent" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.OpacityMask>
+            <Grid x:Name="LyricsArea" ClipToBounds="True" SizeChanged="OnLyricsAreaSizeChanged">
+
+                <!-- A Canvas lets the list keep its full height; inside a Grid cell WPF would clip it to
+                     the cell before it is scrolled into view. Its width is set from code. -->
+                <Canvas>
+                    <StackPanel x:Name="LinesPanel">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform x:Name="LinesShift" />
+                        </StackPanel.RenderTransform>
+                    </StackPanel>
+                </Canvas>
+
+                <!-- Status messages (loading, not found, reconnecting) replace the list -->
+                <StackPanel x:Name="MessagePanel" VerticalAlignment="Center" Opacity="0">
+                    <TextBlock x:Name="MessageText" Style="{StaticResource Lyric}" TextWrapping="Wrap" Opacity="0.75" />
+                    <!-- Shown while a failed lookup waits to reconnect -->
+                    <StackPanel x:Name="RetryPanel" Orientation="Horizontal" Margin="0,12,0,0"
+                                HorizontalAlignment="Left" Visibility="Collapsed">
+                        <TextBlock x:Name="RetryText" FontFamily="{StaticResource TextFont}" FontSize="12"
+                                   Foreground="{StaticResource SecondaryLabel}" VerticalAlignment="Center" />
+                        <Button x:Name="RetryButton" Style="{StaticResource CapsuleButton}" Height="26" Margin="10,0,0,0"
+                                FontSize="12" Click="OnRetryClick" ToolTip="Reconnect now">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE72C;" FontFamily="{StaticResource Icons}" FontSize="11"
+                                           VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock Text="Try now" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+            </Border>
+
+            <!-- Soft scrims keep the header and scrubber readable over the lyrics while hovered.
+                 Several stops approximate an eased fade so there is no visible edge. -->
+            <Border x:Name="TopScrim" Grid.Row="0" Margin="-16,-14,-16,-60" Opacity="0" IsHitTestVisible="False">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#B3121214" Offset="0" />
+                        <GradientStop Color="#94121214" Offset="0.2" />
+                        <GradientStop Color="#66121214" Offset="0.42" />
+                        <GradientStop Color="#38121214" Offset="0.62" />
+                        <GradientStop Color="#14121214" Offset="0.82" />
+                        <GradientStop Color="#00121214" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+            <Border x:Name="BottomScrim" Grid.Row="2" Margin="-16,-60,-16,-14" Opacity="0" IsHitTestVisible="False">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
+                        <GradientStop Color="#B3121214" Offset="0" />
+                        <GradientStop Color="#94121214" Offset="0.2" />
+                        <GradientStop Color="#66121214" Offset="0.42" />
+                        <GradientStop Color="#38121214" Offset="0.62" />
+                        <GradientStop Color="#14121214" Offset="0.82" />
+                        <GradientStop Color="#00121214" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+
+            <!-- Header: artwork, title over artist, now-playing bars and controls. Like the scrubber it
+                 only appears while the window is hovered; otherwise just the lyrics show. -->
+            <Grid x:Name="HeaderRow" Opacity="0" Background="Transparent"
+                  MouseEnter="OnHeaderEnter" MouseLeave="OnHeaderLeave">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <TextBlock x:Name="LockIndicator" Grid.Column="0" Text="&#xE72E;"
-                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11"
-                           Foreground="#B3FFFFFF" VerticalAlignment="Center" Margin="0,0,6,0"
-                           Visibility="Collapsed" />
+                <Grid Grid.Column="0" Width="36" Height="36" Margin="0,0,10,0">
+                    <Border CornerRadius="8" Background="#2C2C2E" />
+                    <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource Icons}" FontSize="14"
+                               Foreground="{StaticResource SecondaryLabel}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Border CornerRadius="8" ClipToBounds="True">
+                        <Border.Background>
+                            <ImageBrush x:Name="ArtBrush" Stretch="UniformToFill" Opacity="0" />
+                        </Border.Background>
+                    </Border>
+                </Grid>
 
-                <TextBlock x:Name="TrackText" Grid.Column="1" FontSize="12" Foreground="#D9FFFFFF"
-                           FontFamily="Segoe UI Variable Text, Segoe UI"
-                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                           Effect="{StaticResource TextShadow}" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <!-- Now-playing bars, as in Apple Music -->
+                        <Grid x:Name="EqBars" Width="12" Height="10" Margin="0,0,6,1" VerticalAlignment="Center">
+                            <Rectangle Width="2.4" HorizontalAlignment="Left" RadiusX="1" RadiusY="1"
+                                       Fill="{StaticResource SystemPink}" RenderTransformOrigin="0.5,1">
+                                <Rectangle.RenderTransform><ScaleTransform x:Name="Eq1" ScaleY="0.3" /></Rectangle.RenderTransform>
+                            </Rectangle>
+                            <Rectangle Width="2.4" HorizontalAlignment="Center" RadiusX="1" RadiusY="1"
+                                       Fill="{StaticResource SystemPink}" RenderTransformOrigin="0.5,1">
+                                <Rectangle.RenderTransform><ScaleTransform x:Name="Eq2" ScaleY="0.3" /></Rectangle.RenderTransform>
+                            </Rectangle>
+                            <Rectangle Width="2.4" HorizontalAlignment="Right" RadiusX="1" RadiusY="1"
+                                       Fill="{StaticResource SystemPink}" RenderTransformOrigin="0.5,1">
+                                <Rectangle.RenderTransform><ScaleTransform x:Name="Eq3" ScaleY="0.3" /></Rectangle.RenderTransform>
+                            </Rectangle>
+                        </Grid>
+                        <TextBlock x:Name="LockIndicator" Text="&#xE72E;" FontFamily="{StaticResource Icons}" FontSize="10"
+                                   Foreground="{StaticResource SecondaryLabel}" Margin="0,0,6,0" VerticalAlignment="Center"
+                                   Visibility="Collapsed" />
+                        <TextBlock x:Name="TitleText" FontFamily="{StaticResource TextFont}" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource Label}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <TextBlock x:Name="ArtistText" FontFamily="{StaticResource TextFont}" FontSize="12"
+                               Foreground="{StaticResource SecondaryLabel}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
 
-                <StackPanel x:Name="Toolbar" Grid.Column="2" Orientation="Horizontal" Margin="8,0,-6,0"
-                            Visibility="Collapsed">
-                    <Button Style="{StaticResource GlassButton}" Content="&#xE738;" Click="OnOffsetDown"
-                            ToolTip="Lirik lebih lambat (−0,25 detik)" />
-                    <TextBlock x:Name="OffsetText" Width="42" FontSize="11" Foreground="#E6FFFFFF"
-                               FontFamily="Segoe UI Variable Text, Segoe UI"
-                               TextAlignment="Center" VerticalAlignment="Center"
-                               ToolTip="Koreksi sinkron untuk lagu ini" />
-                    <Button Style="{StaticResource GlassButton}" Content="&#xE710;" Click="OnOffsetUp"
-                            ToolTip="Lirik lebih cepat (+0,25 detik)" />
-                    <Button Style="{StaticResource GlassButton}" Content="&#xE72E;" Click="OnLockClick" Margin="8,0,2,0"
-                            ToolTip="Kunci &amp; tembus klik (buka: arahkan kursor ke lirik, atau Ctrl+Alt+L)" />
-                    <Button Style="{StaticResource GlassButton}" Content="&#xE711;" Click="OnHideClick"
-                            ToolTip="Sembunyikan (tampilkan lagi: ikon tray atau Ctrl+Alt+K)" />
+                <StackPanel x:Name="Toolbar" Grid.Column="2" Orientation="Horizontal" Margin="8,0,-4,0"
+                            VerticalAlignment="Center" Visibility="Collapsed">
+                    <Button x:Name="PrevButton" Style="{StaticResource RoundButton}" Content="&#xE892;"
+                            Click="OnPreviousClick" ToolTip="Previous track" />
+                    <Button x:Name="PlayButton" Style="{StaticResource RoundButton}" Click="OnPlayPauseClick"
+                            Width="32" Height="32" FontSize="15" ToolTip="Play / pause">
+                        <TextBlock x:Name="PlayIcon" Text="&#xE769;" RenderTransformOrigin="0.5,0.5">
+                            <TextBlock.RenderTransform>
+                                <ScaleTransform x:Name="PlayIconScale" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
+                    </Button>
+                    <Button x:Name="NextButton" Style="{StaticResource RoundButton}" Content="&#xE893;"
+                            Click="OnNextClick" ToolTip="Next track" />
+
+                    <Border Width="1" Height="16" Margin="6,0" Background="{StaticResource Separator}" />
+
+                    <Button Style="{StaticResource RoundButton}" Content="&#xE738;" Click="OnOffsetDown"
+                            ToolTip="Show lyrics later (−0.25 s)" />
+                    <Border VerticalAlignment="Center" CornerRadius="9" Background="#1FFFFFFF" Padding="7,2"
+                            ToolTip="Sync offset for this song">
+                        <TextBlock x:Name="OffsetText" FontFamily="{StaticResource TextFont}" FontSize="11"
+                                   FontWeight="SemiBold" MinWidth="32" TextAlignment="Center"
+                                   Foreground="{StaticResource Label}" />
+                    </Border>
+                    <Button Style="{StaticResource RoundButton}" Content="&#xE710;" Click="OnOffsetUp"
+                            ToolTip="Show lyrics earlier (+0.25 s)" />
+
+                    <Border Width="1" Height="16" Margin="6,0" Background="{StaticResource Separator}" />
+
+                    <Button x:Name="SettingsButton" Style="{StaticResource RoundButton}" Content="&#xE713;"
+                            Click="OnSettingsClick" ToolTip="Appearance" />
+                    <Button Style="{StaticResource RoundButton}" Content="&#xE72E;" Click="OnLockClick"
+                            ToolTip="Lock &amp; click through (unlock: hover the lyrics, or Ctrl+Alt+L)" />
+                    <Button Style="{StaticResource RoundButton}" Content="&#xE711;" Click="OnHideClick"
+                            ToolTip="Hide (show again: tray icon or Ctrl+Alt+K)" />
                 </StackPanel>
             </Grid>
 
-            <!-- Three lines: previous, current, next. Row ratios match LyricsHeightInLines in code. -->
-            <Grid x:Name="LyricsArea" Grid.Row="1" ClipToBounds="True" SizeChanged="OnLyricsAreaSizeChanged">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="1.05*" />
-                    <RowDefinition Height="2.5*" />
-                    <RowDefinition Height="1.05*" />
-                </Grid.RowDefinitions>
-
-                <!-- Carries the line that scrolls out of view -->
-                <TextBlock x:Name="GhostLine" Grid.Row="0" Style="{StaticResource Lyric}" Opacity="0" />
-                <TextBlock x:Name="PrevLine" Grid.Row="0" Style="{StaticResource Lyric}" Opacity="0" />
-                <TextBlock x:Name="CurrentLine" Grid.Row="1" Style="{StaticResource Lyric}" Opacity="0"
-                           TextWrapping="Wrap" LineStackingStrategy="BlockLineHeight" />
-                <TextBlock x:Name="NextLine" Grid.Row="2" Style="{StaticResource Lyric}" Opacity="0" />
-
-                <!-- Shown while a failed lookup waits to reconnect -->
-                <StackPanel x:Name="RetryPanel" Grid.Row="2" Orientation="Horizontal"
-                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-                    <TextBlock x:Name="RetryText" FontSize="12" Foreground="#CCFFFFFF"
-                               FontFamily="Segoe UI Variable Text, Segoe UI" VerticalAlignment="Center"
-                               Effect="{StaticResource TextShadow}" />
-                    <Button x:Name="RetryButton" Style="{StaticResource GlassButton}" Width="NaN" Height="24"
-                            Padding="10,0" Margin="10,0,0,0" FontFamily="Segoe UI Variable Text, Segoe UI"
-                            FontSize="12" Click="OnRetryClick" ToolTip="Hubungkan ulang sekarang">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                       VerticalAlignment="Center" Margin="0,0,6,0" />
-                            <TextBlock Text="Coba sekarang" VerticalAlignment="Center" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
+            <!-- Scrubber with elapsed and remaining time (shown on hover) -->
+            <Grid x:Name="ScrubberRow" Grid.Row="2" Height="14" VerticalAlignment="Bottom" Opacity="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="ElapsedText" FontFamily="{StaticResource TextFont}" FontSize="10" FontWeight="Medium"
+                           Foreground="{StaticResource SecondaryLabel}" MinWidth="30" VerticalAlignment="Center" />
+                <Border Grid.Column="1" Height="4" Margin="6,0" CornerRadius="2" Background="#2EFFFFFF"
+                        VerticalAlignment="Center" ClipToBounds="True">
+                    <Border CornerRadius="2" Background="#D9FFFFFF" RenderTransformOrigin="0,0.5">
+                        <Border.RenderTransform>
+                            <ScaleTransform x:Name="ProgressScale" ScaleX="0" />
+                        </Border.RenderTransform>
+                    </Border>
+                </Border>
+                <TextBlock x:Name="RemainingText" Grid.Column="2" FontFamily="{StaticResource TextFont}" FontSize="10"
+                           FontWeight="Medium" Foreground="{StaticResource SecondaryLabel}" MinWidth="30"
+                           TextAlignment="Right" VerticalAlignment="Center" />
             </Grid>
         </Grid>
+
+        <!-- Appearance settings, opened from the gear button -->
+        <Popup x:Name="SettingsPopup" AllowsTransparency="True" PopupAnimation="Fade" StaysOpen="False"
+               Closed="OnSettingsClosed"
+               Placement="Bottom" PlacementTarget="{Binding ElementName=SettingsButton}" HorizontalOffset="-110"
+               VerticalOffset="6">
+            <Border Width="250" CornerRadius="14" Background="#F22C2C2E" BorderBrush="#26FFFFFF" BorderThickness="1"
+                    Padding="16,12,16,14" TextElement.Foreground="White"
+                    TextElement.FontFamily="{StaticResource TextFont}">
+                <StackPanel>
+                    <Grid Margin="0,0,0,6">
+                        <TextBlock Text="Transparency" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock x:Name="TransparencyText" HorizontalAlignment="Right" FontSize="12"
+                                   Foreground="{StaticResource SecondaryLabel}" />
+                    </Grid>
+                    <Slider x:Name="TransparencySlider" Style="{StaticResource AppleSlider}" Minimum="0" Maximum="100"
+                            ValueChanged="OnTransparencyChanged" />
+                    <Grid Margin="0,2,0,0">
+                        <TextBlock Text="Solid" FontSize="11" Foreground="{StaticResource SecondaryLabel}" />
+                        <TextBlock Text="Clear" FontSize="11" HorizontalAlignment="Right"
+                                   Foreground="{StaticResource SecondaryLabel}" />
+                    </Grid>
+
+                    <Grid Margin="0,14,0,6">
+                        <TextBlock Text="Text size" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock x:Name="TextSizeText" HorizontalAlignment="Right" FontSize="12"
+                                   Foreground="{StaticResource SecondaryLabel}" />
+                    </Grid>
+                    <Slider x:Name="TextSizeSlider" Style="{StaticResource AppleSlider}" Minimum="14" Maximum="48"
+                            ValueChanged="OnTextSizeChanged" />
+                    <Grid Margin="0,2,0,0">
+                        <TextBlock Text="A" FontSize="10" Foreground="{StaticResource SecondaryLabel}" />
+                        <TextBlock Text="A" FontSize="15" HorizontalAlignment="Right"
+                                   Foreground="{StaticResource SecondaryLabel}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Popup>
 
         <!-- Shown while locked and hovered. A popup is its own window, so it stays clickable. -->
         <Popup x:Name="UnlockPopup" AllowsTransparency="True" PopupAnimation="Fade" StaysOpen="True"
                Placement="Relative" PlacementTarget="{Binding ElementName=HeaderRow}">
-            <Button Style="{StaticResource GlassButton}" Width="{x:Static local:MainWindow.UnlockPillWidth}"
-                    Height="{x:Static local:MainWindow.UnlockPillHeight}"
-                    Background="#E01C1C26" BorderBrush="#66FFFFFF"
-                    FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12" Click="OnUnlockClick">
+            <Button Width="{x:Static local:MainWindow.UnlockPillWidth}"
+                    Height="{x:Static local:MainWindow.UnlockPillHeight}" Click="OnUnlockClick"
+                    Foreground="White" FontFamily="{StaticResource TextFont}" FontSize="12" FontWeight="SemiBold"
+                    Cursor="Hand" Focusable="False">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" CornerRadius="14" Background="#F22C2C2E" BorderThickness="1"
+                                BorderBrush="#33FFFFFF">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#F23A3A3C" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE785;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                    <TextBlock Text="&#xE785;" FontFamily="{StaticResource Icons}" FontSize="11"
                                VerticalAlignment="Center" Margin="0,0,7,0" />
-                    <TextBlock Text="Buka kunci" VerticalAlignment="Center" />
+                    <TextBlock Text="Unlock" VerticalAlignment="Center" />
                 </StackPanel>
             </Button>
         </Popup>

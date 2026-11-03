@@ -87,6 +87,25 @@ internal static partial class NativeMethods
         public int SizeOfData;
     }
 
+    /// <summary>Asks Windows 11 to round the window's corners; DWM clips everything it draws, blur included.</summary>
+    public static bool RequestRoundedCorners(nint hWnd)
+    {
+        const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        var round = 2; // DWMWCP_ROUND
+        return DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int)) == 0;
+    }
+
+    /// <summary>Removes the thin outline Windows 11 draws around windows.</summary>
+    public static void HideWindowBorder(nint hWnd)
+    {
+        const int DWMWA_BORDER_COLOR = 34;
+        var none = unchecked((int)0xFFFFFFFE); // DWMWA_COLOR_NONE
+        DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, ref none, sizeof(int));
+    }
+
+    [LibraryImport("dwmapi.dll")]
+    private static partial int DwmSetWindowAttribute(nint hWnd, int attribute, ref int value, int size);
+
     [LibraryImport("user32.dll")]
     private static partial int SetWindowCompositionAttribute(nint hWnd, ref WindowCompositionAttributeData data);
 }

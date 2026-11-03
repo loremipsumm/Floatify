@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using LyricsFloat.Core;
+using Windows.Foundation;
 using Windows.Media.Control;
+using Windows.Storage.Streams;
 
 namespace LyricsFloat.App;
 
@@ -10,7 +12,10 @@ public sealed record PlaybackSnapshot(
     bool IsPlaying,
     TimeSpan Position,
     DateTimeOffset SampledAt,
-    TimeSpan Duration)
+    TimeSpan Duration,
+    bool CanSeek = false,
+    bool CanSkip = false,
+    IRandomAccessStreamReference? Artwork = null)
 {
     public static readonly PlaybackSnapshot NoSpotify = new(false, null, false, TimeSpan.Zero, default, TimeSpan.Zero);
 }
@@ -44,6 +49,28 @@ public sealed class SpotifyWatcher : IDisposable
         _poll?.Dispose();
         if (_manager is not null) _manager.SessionsChanged -= OnSessionsChanged;
         Attach(null);
+    }
+
+    public Task TogglePlayPauseAsync() => SendAsync(s => s.TryTogglePlayPauseAsync());
+
+    public Task NextAsync() => SendAsync(s => s.TrySkipNextAsync());
+
+    public Task PreviousAsync() => SendAsync(s => s.TrySkipPreviousAsync());
+
+    public Task SeekAsync(TimeSpan position) => SendAsync(s => s.TryChangePlaybackPositionAsync(position.Ticks));
+
+    private async Task SendAsync(Func<GlobalSystemMediaTransportControlsSession, IAsyncOperation<bool>> command)
+    {
+        if (_session is not { } session) return;
+        try
+        {
+            await command(session);
+        }
+        catch (COMException ex)
+        {
+            Log.Error("Media command failed", ex);
+        }
+        _ = RefreshAsync();
     }
 
     private void OnSessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
@@ -110,7 +137,10 @@ public sealed class SpotifyWatcher : IDisposable
                 IsPlaying: playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing,
                 Position: timeline.Position,
                 SampledAt: timeline.LastUpdatedTime,
-                Duration: timeline.EndTime - timeline.StartTime));
+                Duration: timeline.EndTime - timeline.StartTime,
+                CanSeek: playback.Controls.IsPlaybackPositionEnabled,
+                CanSkip: playback.Controls.IsNextEnabled,
+                Artwork: props?.Thumbnail));
         }
         catch (COMException)
         {

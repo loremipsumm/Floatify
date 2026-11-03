@@ -23,6 +23,9 @@ var props = await spotify.TryGetMediaPropertiesAsync();
 Console.WriteLine($"Track : {props.Title}");
 Console.WriteLine($"Artist: {props.Artist}");
 Console.WriteLine($"Album : {props.AlbumTitle}");
+var controls = spotify.GetPlaybackInfo().Controls;
+Console.WriteLine($"Controls: playPause={controls.IsPlayPauseToggleEnabled} next={controls.IsNextEnabled} " +
+                  $"previous={controls.IsPreviousEnabled} seek={controls.IsPlaybackPositionEnabled}");
 Console.WriteLine();
 Console.WriteLine("local time    | status  | position  | lastUpdated   | extrapolated | end");
 

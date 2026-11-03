@@ -8,52 +8,54 @@ namespace LyricsFloat.App;
 /// <summary>Notification-area icon. The overlay has no taskbar button, so this is where its menu lives.</summary>
 public sealed class TrayIcon : IDisposable
 {
-    private static readonly (string Label, double Tint)[] TintChoices =
-        [("Bening", 0), ("Tipis", 0.18), ("Sedang", 0.32), ("Gelap", 0.5)];
+    private static readonly (string Label, double Transparency)[] TransparencyChoices =
+        [("Solid", 0.1), ("Normal", 0.35), ("Frosted", 0.6), ("Clear", 0.85)];
 
     private readonly Forms.NotifyIcon _icon;
 
     public TrayIcon(MainWindow window, AppSettings settings, Action exit)
     {
-        var menu = new Forms.ContextMenuStrip();
+        var menu = new Forms.ContextMenuStrip { Renderer = new Forms.ToolStripProfessionalRenderer(new DarkMenuColors()) };
+        menu.ForeColor = Drawing.Color.White;
+        menu.ShowImageMargin = true;
 
-        menu.Items.Add("Tampilkan / sembunyikan    Ctrl+Alt+K", null, (_, _) => window.ToggleVisibility());
+        menu.Items.Add("Show / hide    Ctrl+Alt+K", null, (_, _) => window.ToggleVisibility());
 
-        var clickThrough = new Forms.ToolStripMenuItem("Kunci && tembus klik    Ctrl+Alt+L", null,
+        var clickThrough = new Forms.ToolStripMenuItem("Lock && click through    Ctrl+Alt+L", null,
             (_, _) => window.ClickThrough = !window.ClickThrough);
         menu.Items.Add(clickThrough);
 
         // Only shown while a lyrics lookup is waiting to reconnect; works even when the overlay is locked.
-        var reconnect = new Forms.ToolStripMenuItem("Hubungkan ulang sekarang", null, (_, _) => window.RetryLyricsNow());
+        var reconnect = new Forms.ToolStripMenuItem("Reconnect now", null, (_, _) => window.RetryLyricsNow());
         menu.Items.Add(reconnect);
 
-        var tint = new Forms.ToolStripMenuItem("Warna kaca");
-        foreach (var (label, value) in TintChoices)
-            tint.DropDownItems.Add(new Forms.ToolStripMenuItem(label, null, (_, _) => window.GlassTint = value) { Tag = value });
-        menu.Items.Add(tint);
+        var background = new Forms.ToolStripMenuItem("Transparency");
+        foreach (var (label, value) in TransparencyChoices)
+            background.DropDownItems.Add(new Forms.ToolStripMenuItem(label, null, (_, _) => window.Transparency = value) { Tag = value });
+        menu.Items.Add(background);
 
-        menu.Items.Add("Reset posisi", null, (_, _) => window.ResetPosition());
+        menu.Items.Add("Reset position", null, (_, _) => window.ResetPosition());
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        var autoStart = new Forms.ToolStripMenuItem("Jalankan saat Windows mulai", null,
+        var autoStart = new Forms.ToolStripMenuItem("Start with Windows", null,
             (_, _) => AutoStart.Enabled = !AutoStart.Enabled);
         menu.Items.Add(autoStart);
 
-        menu.Items.Add("Buka folder data", null, (_, _) =>
+        menu.Items.Add("Open data folder", null, (_, _) =>
         {
             Directory.CreateDirectory(AppSettings.DataDirectory);
             Process.Start("explorer.exe", AppSettings.DataDirectory);
         });
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Keluar", null, (_, _) => exit());
+        menu.Items.Add("Quit", null, (_, _) => exit());
 
         menu.Opening += (_, _) =>
         {
             clickThrough.Checked = window.ClickThrough;
             reconnect.Visible = window.IsWaitingToRetry;
             autoStart.Checked = AutoStart.Enabled;
-            foreach (Forms.ToolStripMenuItem item in tint.DropDownItems)
-                item.Checked = Math.Abs((double)item.Tag! - settings.GlassTint) < 0.01;
+            foreach (Forms.ToolStripMenuItem item in background.DropDownItems)
+                item.Checked = Math.Abs((double)item.Tag! - settings.Transparency) < 0.01;
         };
 
         _icon = new Forms.NotifyIcon
@@ -95,5 +97,28 @@ public sealed class TrayIcon : IDisposable
             g.DrawString("♪", font, Drawing.Brushes.White, new Drawing.RectangleF(0, 1, 32, 32), format);
         }
         return Drawing.Icon.FromHandle(bitmap.GetHicon());
+    }
+
+    /// <summary>macOS-style dark menu colours: dark material with the system blue highlight.</summary>
+    private sealed class DarkMenuColors : Forms.ProfessionalColorTable
+    {
+        private static readonly Drawing.Color Background = Drawing.Color.FromArgb(0x1C, 0x1C, 0x1E);
+        private static readonly Drawing.Color Accent = Drawing.Color.FromArgb(0x0A, 0x84, 0xFF);
+        private static readonly Drawing.Color Border = Drawing.Color.FromArgb(0x3A, 0x3A, 0x3C);
+
+        public override Drawing.Color ToolStripDropDownBackground => Background;
+        public override Drawing.Color ImageMarginGradientBegin => Background;
+        public override Drawing.Color ImageMarginGradientMiddle => Background;
+        public override Drawing.Color ImageMarginGradientEnd => Background;
+        public override Drawing.Color MenuBorder => Border;
+        public override Drawing.Color MenuItemBorder => Accent;
+        public override Drawing.Color MenuItemSelected => Accent;
+        public override Drawing.Color MenuItemSelectedGradientBegin => Accent;
+        public override Drawing.Color MenuItemSelectedGradientEnd => Accent;
+        public override Drawing.Color SeparatorDark => Border;
+        public override Drawing.Color SeparatorLight => Background;
+        public override Drawing.Color CheckBackground => Accent;
+        public override Drawing.Color CheckSelectedBackground => Accent;
+        public override Drawing.Color CheckPressedBackground => Accent;
     }
 }

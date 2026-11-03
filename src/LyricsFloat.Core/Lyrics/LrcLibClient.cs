@@ -21,10 +21,16 @@ public sealed class LrcLibException(HttpStatusCode status, TimeSpan? retryAfter)
 }
 
 /// <summary>Client for https://lrclib.net, a free and open database of synced (LRC) lyrics.</summary>
-public sealed class LrcLibClient(HttpClient http)
+public sealed class LrcLibClient(HttpClient http, Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
     /// <summary>Search results further than this from the playing track are treated as another recording.</summary>
     private const double DurationToleranceSeconds = 5;
+
+    // LRCLIB sheds load with "503 ServerOverloaded" and a Retry-After of about a second; a short wait usually gets through.
+    private const int AttemptsPerRequest = 3;
+    private static readonly TimeSpan MaxInlineWait = TimeSpan.FromSeconds(3);
+
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay = delay ?? Task.Delay;
 
     public static HttpClient CreateHttpClient()
     {
@@ -34,35 +40,49 @@ public sealed class LrcLibClient(HttpClient http)
         return http;
     }
 
+    /// <summary>
+    /// Tries the cheapest, most exact lookups first and moves on when one fails, so a single busy
+    /// endpoint can't sink the whole lookup. Throws only when LRCLIB could not be reached at all.
+    /// </summary>
     public async Task<LrcLibRecord?> FindAsync(TrackInfo track, TimeSpan duration, CancellationToken ct)
     {
-        LrcLibRecord? fallback = null;
-
-        if (duration > TimeSpan.Zero)
-        {
-            var exact = await GetAsync(track, duration, ct);
-            if (exact is { SyncedLyrics: not null } or { Instrumental: true }) return exact;
-            fallback = exact;
-        }
-
         var title = TrackNormalizer.CleanTitle(track.Title);
         var artist = TrackNormalizer.PrimaryArtist(track.Artist);
-        string[] queries =
-        [
-            $"track_name={E(track.Title)}&artist_name={E(artist)}",
-            $"track_name={E(title)}&artist_name={E(artist)}",
-            $"q={E($"{title} {artist}")}",
-        ];
+        var signature = SignatureQuery(track, duration);
 
-        foreach (var query in queries.Distinct())
+        var lookups = new List<string>();
+        if (duration > TimeSpan.Zero) lookups.Add($"api/get-cached?{signature}"); // database only, fast
+        lookups.Add($"api/search?track_name={E(track.Title)}&artist_name={E(artist)}");
+        lookups.Add($"api/search?track_name={E(title)}&artist_name={E(artist)}");
+        if (duration > TimeSpan.Zero) lookups.Add($"api/get?{signature}");       // may consult outside sources
+        lookups.Add($"api/search?q={E($"{title} {artist}")}");
+
+        LrcLibRecord? fallback = null;
+        Exception? lastError = null;
+        var anyAnswered = false;
+
+        foreach (var url in lookups.Distinct())
         {
-            using var response = await SendAsync($"api/search?{query}", ct);
-            List<LrcLibRecord> results = response is null ? [] : await response.Content.ReadFromJsonAsync<List<LrcLibRecord>>(ct) ?? [];
+            IReadOnlyList<LrcLibRecord> results;
+            try
+            {
+                results = await FetchAsync(url, ct);
+                anyAnswered = true;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && LookupRetry.IsTransient(ex))
+            {
+                lastError = ex;
+                continue;
+            }
+
             var best = PickBest(results, duration);
-            if (best is { SyncedLyrics: not null }) return best;
+            if (best is { SyncedLyrics: not null } or { Instrumental: true }) return best;
             fallback ??= best;
         }
 
+        // Some lookups answered cleanly, so "nothing found" is a real answer rather than an outage.
+        if (fallback is null && !anyAnswered && lastError is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(lastError);
         return fallback;
     }
 
@@ -80,27 +100,48 @@ public sealed class LrcLibClient(HttpClient http)
             .FirstOrDefault();
     }
 
-    private async Task<LrcLibRecord?> GetAsync(TrackInfo track, TimeSpan duration, CancellationToken ct)
+    private static string SignatureQuery(TrackInfo track, TimeSpan duration)
     {
-        var url = $"api/get?track_name={E(track.Title)}&artist_name={E(track.Artist)}&duration={Math.Round(duration.TotalSeconds):0}";
-        if (track.Album.Length > 0) url += $"&album_name={E(track.Album)}";
+        var query = $"track_name={E(track.Title)}&artist_name={E(track.Artist)}&duration={Math.Round(duration.TotalSeconds):0}";
+        return track.Album.Length > 0 ? query + $"&album_name={E(track.Album)}" : query;
+    }
 
+    /// <summary>Runs one lookup; "get" endpoints return a single record, "search" a list.</summary>
+    private async Task<IReadOnlyList<LrcLibRecord>> FetchAsync(string url, CancellationToken ct)
+    {
         using var response = await SendAsync(url, ct);
-        return response is null ? null : await response.Content.ReadFromJsonAsync<LrcLibRecord>(ct);
+        if (response is null) return [];
+
+        if (url.StartsWith("api/search", StringComparison.Ordinal))
+            return await response.Content.ReadFromJsonAsync<List<LrcLibRecord>>(ct) ?? [];
+
+        var record = await response.Content.ReadFromJsonAsync<LrcLibRecord>(ct);
+        return record is null ? [] : [record];
     }
 
     /// <summary>Returns the response on success, null on 404, and throws <see cref="LrcLibException"/> otherwise.</summary>
     private async Task<HttpResponseMessage?> SendAsync(string url, CancellationToken ct)
     {
-        var response = await http.GetAsync(url, ct);
-        if (response.IsSuccessStatusCode) return response;
-
-        using (response)
+        for (var attempt = 1; ; attempt++)
         {
-            if (response.StatusCode == HttpStatusCode.NotFound) return null;
+            var response = await http.GetAsync(url, ct);
+            if (response.IsSuccessStatusCode) return response;
 
-            var retryAfter = response.Headers.RetryAfter;
-            throw new LrcLibException(response.StatusCode, retryAfter?.Delta ?? retryAfter?.Date - DateTimeOffset.UtcNow);
+            using (response)
+            {
+                if (response.StatusCode == HttpStatusCode.NotFound) return null;
+
+                var header = response.Headers.RetryAfter;
+                var retryAfter = header?.Delta ?? header?.Date - DateTimeOffset.UtcNow;
+                var busy = response.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests;
+                var wait = retryAfter is { } r && r > TimeSpan.Zero ? r : TimeSpan.FromSeconds(1);
+
+                if (!busy || attempt >= AttemptsPerRequest || wait > MaxInlineWait)
+                    throw new LrcLibException(response.StatusCode, retryAfter);
+
+                // Jitter keeps retries from many clients from landing on the same instant.
+                await _delay(wait + TimeSpan.FromMilliseconds(Random.Shared.Next(100, 400)), ct);
+            }
         }
     }
 
