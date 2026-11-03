@@ -118,6 +118,15 @@ public partial class MainWindow : Window
     private bool _growUp;
     private bool _userSizing;
 
+    // Dropped partly off screen, the window springs back inside its monitor's work area.
+    private static readonly IEasingFunction SnapBounce = CreateSnapBounce();
+    private const double SnapBackMs = 450;
+    /// <summary>Gap always kept between the window and the edges of the screen's work area.</summary>
+    private const double ScreenMargin = 12;
+    private bool _snapAnimating;
+    private Point _snapFrom, _snapTo;
+    private TimeSpan _snapStart;
+
     // Scrubbing the footer's progress bar: dragging previews a position, releasing seeks there.
     private bool _scrubbing;
     private double _scrubFraction; // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE: the user is dragging or resizing
@@ -380,6 +389,12 @@ public partial class MainWindow : Window
         RegisterHotkey(HotkeyToggleVisibility, NativeMethods.VK_K);
     }
 
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal; // last line of defence
+    }
+
     protected override void OnClosing(CancelEventArgs e)
     {
         // Alt+F4 and friends only hide the overlay; quitting goes through the tray menu.
@@ -412,6 +427,7 @@ public partial class MainWindow : Window
         ApplyBackdropBlur();
         Render();
         Dispatcher.BeginInvoke(WarmUpFooter, DispatcherPriority.Background);
+        Dispatcher.BeginInvoke(BounceBackOnScreen, DispatcherPriority.Background); // a saved spot may now be off screen
     }
 
     /// <summary>
@@ -895,6 +911,15 @@ public partial class MainWindow : Window
         var dt = Math.Clamp((now - _lastFrameTime).TotalSeconds, 0, 0.05);
         _lastFrameTime = now;
 
+        if (_snapAnimating)
+        {
+            var s = Math.Clamp((now - _snapStart).TotalMilliseconds / SnapBackMs, 0, 1);
+            var k = SnapBounce.Ease(s);
+            Left = _snapFrom.X + (_snapTo.X - _snapFrom.X) * k;
+            Top = _snapFrom.Y + (_snapTo.Y - _snapFrom.Y) * k;
+            if (s >= 1) FinishSnapBack();
+        }
+
         if (_footerAnimating)
         {
             var t = Math.Clamp((now - _footerStart).TotalMilliseconds / _footerDuration, 0, 1);
@@ -988,7 +1013,7 @@ public partial class MainWindow : Window
             ScrubberRow.Visibility = Visibility.Visible;
             Root.UpdateLayout();
             target = _footerHeight = ScrubberRow.ActualHeight + FooterGap + CardPadding;
-            if (_footerExtra < 0.5) _growUp = Top + _contentHeight + target > SystemParameters.WorkArea.Bottom;
+            if (_footerExtra < 0.5) _growUp = Top + _contentHeight + target > WorkAreaInDips().Bottom - ScreenMargin;
         }
 
         if (!_footerAnimating && Math.Abs(target - _footerExtra) < 0.5) return;
@@ -998,6 +1023,52 @@ public partial class MainWindow : Window
         _footerDuration = open ? FooterOpenMs : FooterCloseMs;
         _footerStart = _lastFrameTime;
         _footerAnimating = true;
+    }
+
+    /// <summary>If any part of the window lies outside its monitor's work area, glide it back in with a small bounce.</summary>
+    private void BounceBackOnScreen()
+    {
+        var area = WorkAreaInDips();
+        area.Inflate(-ScreenMargin, -ScreenMargin); // never rest flush against the screen edge
+        var width = ActualWidth;
+        var height = Height;
+        var left = Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - width));
+        var top = Math.Clamp(Top, area.Top, Math.Max(area.Top, area.Bottom - height));
+        if (Math.Abs(left - Left) < 0.5 && Math.Abs(top - Top) < 0.5) return;
+
+        _snapFrom = new Point(Left, Top);
+        _snapTo = new Point(left, top);
+        _snapStart = _lastFrameTime;
+        _snapAnimating = true;
+    }
+
+    private void FinishSnapBack()
+    {
+        _snapAnimating = false;
+        Left = _snapTo.X;
+        Top = _snapTo.Y;
+        if (_growUp) _anchorTop = Top + _footerExtra; // keep the footer's grow-upward anchor in step
+        SaveBounds();
+    }
+
+    /// <summary>Work area (screen minus taskbar) of the monitor the window is on, in WPF units.</summary>
+    private Rect WorkAreaInDips()
+    {
+        var info = new NativeMethods.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+        var monitor = NativeMethods.MonitorFromWindow(_hwnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        if (monitor == 0 || !NativeMethods.GetMonitorInfo(monitor, ref info)) return SystemParameters.WorkArea;
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var work = info.rcWork;
+        return new Rect(work.Left / dpi.DpiScaleX, work.Top / dpi.DpiScaleY,
+                        (work.Right - work.Left) / dpi.DpiScaleX, (work.Bottom - work.Top) / dpi.DpiScaleY);
+    }
+
+    private static IEasingFunction CreateSnapBounce()
+    {
+        var bounce = new BackEase { Amplitude = 0.4, EasingMode = EasingMode.EaseOut };
+        bounce.Freeze();
+        return bounce;
     }
 
     private void SetFooterExtra(double extra)
@@ -1280,6 +1351,11 @@ public partial class MainWindow : Window
     {
         if (_hwnd == 0) return;
 
+        // An overlay never maximizes (that also stops Windows snapping it to fill the screen when dragged
+        // to the top edge); a maximized window couldn't be resized and would strand the footer mid-screen.
+        var frame = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_STYLE);
+        NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_STYLE, frame & ~NativeMethods.WS_MAXIMIZEBOX);
+
         var style = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
         // Tool window: hidden from Alt+Tab. No-activate: clicking it never steals focus from your work.
         style |= NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE;
@@ -1298,6 +1374,10 @@ public partial class MainWindow : Window
     {
         switch (msg)
         {
+            case NativeMethods.WM_SYSCOMMAND when ((int)wParam & 0xFFF0) == NativeMethods.SC_MAXIMIZE:
+                handled = true; // refuse maximize requests (keyboard shortcuts, double-clicks, snap)
+                break;
+
             case NativeMethods.WM_ENTERSIZEMOVE:
                 _userSizing = true;
                 break;
@@ -1307,6 +1387,7 @@ public partial class MainWindow : Window
                 if (!_footerAnimating) UpdateCardLayout(Height);
                 SaveBounds();
                 ApplyBackdropBlur();
+                BounceBackOnScreen();
                 break;
 
             case NativeMethods.WM_HOTKEY:

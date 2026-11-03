@@ -4,7 +4,11 @@ namespace LyricsFloat.App;
 
 internal static partial class NativeMethods
 {
+    public const int GWL_STYLE = -16;
     public const int GWL_EXSTYLE = -20;
+    public const nint WS_MAXIMIZEBOX = 0x00010000;
+    public const int WM_SYSCOMMAND = 0x0112;
+    public const int SC_MAXIMIZE = 0xF030;
     public const nint WS_EX_TRANSPARENT = 0x20;
     public const nint WS_EX_TOOLWINDOW = 0x80;
     public const nint WS_EX_NOACTIVATE = 0x08000000;
@@ -55,6 +59,24 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetWindowRect(nint hWnd, out RECT rect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public int dwFlags;
+    }
+
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [LibraryImport("user32.dll")]
+    public static partial nint MonitorFromWindow(nint hWnd, uint flags);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetMonitorInfo(nint hMonitor, ref MONITORINFO info);
 
     /// <summary>
     /// Has the compositor blur whatever is behind the window, the effect behind the Windows taskbar.
