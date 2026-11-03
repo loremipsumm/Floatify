@@ -160,9 +160,11 @@ public partial class MainWindow : Window
         LockIndicator.Visibility = settings.ClickThrough ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (UIElement item in Toolbar.Children) item.RenderTransform = new TranslateTransform();
-        // Footer tooltips sit centred just above their button.
+        // Tooltips sit centred on their control: above it in the footer, below it in the header.
         foreach (var control in new FrameworkElement[] { ShuffleButton, PrevButton, PlayButton, NextButton, RepeatButton })
             SetTip(control, control.ToolTip);
+        foreach (var control in Toolbar.Children.OfType<FrameworkElement>().Where(c => c.ToolTip is not null))
+            SetTip(control, control.ToolTip, below: true);
 
         _resumeFollow.Tick += (_, _) => ResumeFollow();
         _renderTimer.Tick += (_, _) => Render();
@@ -1433,8 +1435,8 @@ public partial class MainWindow : Window
         });
     }
 
-    /// <summary>Gives a footer control a tooltip centred just above it (or updates the text of the one it has).</summary>
-    private static void SetTip(FrameworkElement element, object? content)
+    /// <summary>Gives a control a tooltip centred just above (or below) it, or updates the text of the one it has.</summary>
+    private static void SetTip(FrameworkElement element, object? content, bool below = false)
     {
         if (element.ToolTip is ToolTip tip)
         {
@@ -1446,7 +1448,9 @@ public partial class MainWindow : Window
             Content = content,
             Placement = PlacementMode.Custom,
             CustomPopupPlacementCallback = (popup, target, _) =>
-                [new CustomPopupPlacement(new Point((target.Width - popup.Width) / 2, -popup.Height - 6), PopupPrimaryAxis.Horizontal)],
+                [new CustomPopupPlacement(
+                    new Point((target.Width - popup.Width) / 2, below ? target.Height + 6 : -popup.Height - 6),
+                    PopupPrimaryAxis.Horizontal)],
         };
     }
 

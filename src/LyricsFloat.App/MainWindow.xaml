@@ -66,6 +66,8 @@
             <Setter Property="Padding" Value="0" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="ToolTipService.InitialShowDelay" Value="120" />
+            <Setter Property="ToolTipService.BetweenShowDelay" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -495,25 +497,26 @@
                 <StackPanel x:Name="Toolbar" Grid.Column="2" Orientation="Horizontal" Margin="8,0,-4,0"
                             VerticalAlignment="Center" Visibility="Collapsed">
                     <Button Style="{StaticResource RoundButton}" Content="&#xE738;" Click="OnOffsetDown"
-                            ToolTip="Show lyrics later (−0.25 s · Shift: −2 s)" />
+                            ToolTip="Later (Shift: 2s)" />
                     <Border VerticalAlignment="Center" CornerRadius="9" Background="#1FFFFFFF" Padding="7,2"
                             MouseRightButtonUp="OnOffsetReset"
-                            ToolTip="Sync offset for this song. Right-click a lyric line as it's sung to sync instantly; right-click here to reset.">
+                            ToolTip="Sync offset · right-click to reset"
+                            ToolTipService.InitialShowDelay="120" ToolTipService.BetweenShowDelay="0">
                         <TextBlock x:Name="OffsetText" FontFamily="{StaticResource TextFont}" FontSize="11"
                                    FontWeight="SemiBold" MinWidth="32" TextAlignment="Center"
                                    Foreground="{StaticResource Label}" />
                     </Border>
                     <Button Style="{StaticResource RoundButton}" Content="&#xE710;" Click="OnOffsetUp"
-                            ToolTip="Show lyrics earlier (+0.25 s · Shift: +2 s)" />
+                            ToolTip="Earlier (Shift: 2s)" />
 
                     <Border Width="1" Height="16" Margin="6,0" Background="{StaticResource Separator}" />
 
                     <Button x:Name="SettingsButton" Style="{StaticResource RoundButton}" Content="&#xE713;"
-                            Click="OnSettingsClick" ToolTip="Appearance" />
+                            Click="OnSettingsClick" ToolTip="Settings" />
                     <Button Style="{StaticResource RoundButton}" Content="&#xE72E;" Click="OnLockClick"
-                            ToolTip="Lock &amp; click through (unlock: hover the lyrics, or Ctrl+Alt+L)" />
+                            ToolTip="Lock · Ctrl+Alt+L" />
                     <Button Style="{StaticResource RoundButton}" Content="&#xE711;" Click="OnHideClick"
-                            ToolTip="Hide (show again: tray icon or Ctrl+Alt+K)" />
+                            ToolTip="Hide · Ctrl+Alt+K" />
                 </StackPanel>
             </Grid>
 
@@ -550,6 +553,7 @@
                 </Button>
 
                 <Button x:Name="PlayButton" Click="OnPlayPauseClick" Margin="8,0" Cursor="Hand" Focusable="False"
+                        ToolTipService.InitialShowDelay="120" ToolTipService.BetweenShowDelay="0"
                         ToolTip="Play / pause">
                     <Button.Template>
                         <!-- White disc with a solid black glyph; grows slightly on hover -->
