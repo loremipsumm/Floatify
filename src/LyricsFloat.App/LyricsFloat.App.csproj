@@ -9,10 +9,10 @@
     <!-- Only for the notification-area icon (NotifyIcon). -->
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>SpotifyLyricsFloat</AssemblyName>
+    <AssemblyName>Floatify</AssemblyName>
     <RootNamespace>LyricsFloat.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <!-- WinForms analyzer wants DPI set in code, but WPF reads it from app.manifest. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>

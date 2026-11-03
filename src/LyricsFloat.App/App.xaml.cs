@@ -12,7 +12,8 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        _instanceMutex = new Mutex(initiallyOwned: true, @"Local\SpotifyLyricsFloat", out var isFirstInstance);
+        AppSettings.MigrateLegacyData(); // before anything (including the log) touches the data folder
+        _instanceMutex = new Mutex(initiallyOwned: true, @"Local\Floatify", out var isFirstInstance);
         if (!isFirstInstance)
         {
             Shutdown();
@@ -23,14 +24,17 @@ public partial class App : Application
         DispatcherUnhandledException += OnUnhandledException;
 
         var settings = AppSettings.Load();
+        AutoStart.MigrateLegacyEntry();
+        var background = e.Args.Contains(AutoStart.BackgroundFlag, StringComparer.OrdinalIgnoreCase);
         var lyrics = new LyricsService(
             new LrcLibClient(LrcLibClient.CreateHttpClient()),
             new LyricsCache(AppSettings.LyricsCacheDirectory));
 
         _window = new MainWindow(settings, lyrics);
         _tray = new TrayIcon(_window, settings, ExitApp);
-        _window.Show();
-        Log.Info("Started");
+        // Started with Windows: stay out of sight until Spotify plays (the welcome card still shows on first run).
+        _window.Start(showNow: !background || !settings.OnboardingDone);
+        Log.Info(background ? "Started in the background" : "Started");
     }
 
     protected override void OnExit(ExitEventArgs e)

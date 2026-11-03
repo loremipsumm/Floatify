@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -12,6 +13,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using LyricsFloat.Core;
 using LyricsFloat.Core.Lyrics;
+using Windows.Media;
 using Windows.Storage.Streams;
 
 namespace LyricsFloat.App;
@@ -22,17 +24,31 @@ public partial class MainWindow : Window
 
     /// <summary>Matches the corner radius Windows 11 gives rounded windows, which also clips the blur.</summary>
     private const double CornerRadius = 8;
+
+    /// <summary>Space between the card edge and the header / scrubber (the content grid's margin in XAML).</summary>
+    private const double CardPadding = 14;
+
+    /// <summary>Space between the lyrics card and the footer when it opens.</summary>
+    private const double FooterGap = 2;
     public const double UnlockPillHeight = 28;
 
     private const int HotkeyClickThrough = 1;
     private const int HotkeyToggleVisibility = 2;
     private const double OffsetStep = 0.25;
+    private const double LargeOffsetStep = 2;
+    // People click a beat after a line starts; this much lead makes "sync to this line" land on time.
+    private const double ReactionLeadSeconds = 0.25;
+
+    // With auto-hide on, a paused song keeps the overlay up this long before it slips away.
+    private static readonly TimeSpan AutoHidePause = TimeSpan.FromMinutes(1);
+    // After the user or app start shows the overlay, give it a moment before auto-hide may act.
+    private static readonly TimeSpan AutoHideGrace = TimeSpan.FromSeconds(8);
     private const double DefaultWidth = 560;
     private const double DefaultHeight = 256;
 
     // Lyric layout relative to the text size: line height, and the gap between lines.
     private const double LineHeightFactor = 1.2;
-    private const double LineGapFactor = 0.98;
+    private const double LineGapFactor = 0.78;
     private const int MinVisibleLines = 3;
     // Share of the lyrics height lost to the fade at each edge (see the OpacityMask in XAML).
     private const double EdgeFade = 0.08;
@@ -56,6 +72,10 @@ public partial class MainWindow : Window
     private bool _isPlaying;
     private bool _canSeek;
     private bool _canSkip;
+    private bool _canShuffle;
+    private bool _canRepeat;
+    private bool? _shuffle;
+    private MediaPlaybackAutoRepeatMode? _repeat;
     private bool _hasArtwork;
     private readonly DispatcherTimer _saveSoon = new() { Interval = TimeSpan.FromMilliseconds(400) };
     private int _artworkVersion;
@@ -76,7 +96,43 @@ public partial class MainWindow : Window
 
     private DateTime _cursorLastInside;
     private DateTime _settingsClosedAt;
-    private DateTime _lockHintUntil;
+
+    // Browsing the lyrics with the wheel pauses following the song until "Back to current" or a few idle seconds.
+    private static readonly TimeSpan FollowResumeDelay = TimeSpan.FromSeconds(8);
+    private readonly DispatcherTimer _resumeFollow = new() { Interval = FollowResumeDelay };
+    private bool _manualScroll;
+    private double _scrollTarget;
+    private TimeSpan _lastFrameTime;
+
+    // Footer section: on hover the window grows by the footer's height with a smooth ease in and out
+    // (no overshoot). _footerExtra is how much taller than the lyrics card the window currently is.
+    private const double FooterOpenMs = 360;
+    private const double FooterCloseMs = 300;
+    private double _footerExtra;
+    private double _footerHeight;
+    private double _footerFrom, _footerTo, _footerDuration;
+    private TimeSpan _footerStart;
+    private bool _footerAnimating;
+    private double _contentHeight;
+    private double _anchorTop;
+    private bool _growUp;
+    private bool _userSizing;
+
+    // Scrubbing the footer's progress bar: dragging previews a position, releasing seeks there.
+    private bool _scrubbing;
+    private double _scrubFraction; // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE: the user is dragging or resizing
+
+    // Visibility: started hidden (--background), hidden on purpose by the user, welcome card up, and
+    // bookkeeping for auto-hide and the show/hide fades.
+    private bool _startHidden;
+    private bool _userHidden;
+    private bool _welcomeOpen;
+    private bool _syncingSwitches;
+    private DateTime _pausedSince;
+    private DateTime _autoHideAfter;
+    private int _visibilityVersion;
+    private (string Title, string Subtitle) _hint;
+    private DateTime _hintUntil;
 
     public MainWindow(AppSettings settings, LyricsService lyrics)
     {
@@ -86,6 +142,7 @@ public partial class MainWindow : Window
 
         Width = Math.Max(MinWidth, settings.Width);
         Height = Math.Max(MinHeight, settings.Height);
+        UpdateCardLayout(Height);
         if (settings.Left is { } left && settings.Top is { } top && IsOnScreen(left, top))
         {
             Left = left;
@@ -103,7 +160,11 @@ public partial class MainWindow : Window
         LockIndicator.Visibility = settings.ClickThrough ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (UIElement item in Toolbar.Children) item.RenderTransform = new TranslateTransform();
+        // Footer tooltips sit centred just above their button.
+        foreach (var control in new FrameworkElement[] { ShuffleButton, PrevButton, PlayButton, NextButton, RepeatButton })
+            SetTip(control, control.ToolTip);
 
+        _resumeFollow.Tick += (_, _) => ResumeFollow();
         _renderTimer.Tick += (_, _) => Render();
         // The karaoke sweep and progress bar move every frame; line changes stay on the slower render tick.
         CompositionTarget.Rendering += OnFrame;
@@ -129,7 +190,8 @@ public partial class MainWindow : Window
             Toolbar.Visibility = Visibility.Collapsed;
             if (value) ShowChrome(false);
             LockIndicator.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
-            _lockHintUntil = value ? DateTime.Now.AddSeconds(4) : default;
+            if (value) ShowHint("Locked", "Hover over the lyrics to unlock", 4);
+            else _hintUntil = default;
             Render();
         }
     }
@@ -146,16 +208,144 @@ public partial class MainWindow : Window
         }
     }
 
-    // Both the dark material and the artwork backdrop thin out as transparency rises.
-    private double MaterialOpacityTarget => 0.92 * (1 - _settings.Transparency);
-    private double BackdropOpacityTarget => 0.8 * (1 - _settings.Transparency);
+    // Both the dark material and the artwork backdrop thin out as transparency rises, but never vanish:
+    // a little dark tint always remains so white lyrics stay readable over bright windows.
+    private double MaterialOpacityTarget => 0.25 + 0.67 * (1 - _settings.Transparency);
+    private double BackdropOpacityTarget => 0.12 + 0.68 * (1 - _settings.Transparency);
 
     private double CurrentOffset => _track is null ? 0 : _settings.TrackOffsets.GetValueOrDefault(_track.Key);
 
+    public bool AutoHide
+    {
+        get => _settings.AutoHide;
+        set
+        {
+            _settings.AutoHide = value;
+            _settings.Save();
+            if (!value && !_userHidden && _spotifyFound) ShowAnimated();
+            UpdateAutoVisibility();
+        }
+    }
+
+    /// <summary>Creates the window (hidden or not) and starts following Spotify.</summary>
+    public async void Start(bool showNow)
+    {
+        _startHidden = !showNow;
+        new WindowInteropHelper(this).EnsureHandle(); // hotkeys and blur need the window even while hidden
+        _renderTimer.Start();
+        if (showNow) ShowAnimated();
+        if (!_settings.OnboardingDone) ShowWelcome();
+
+        try
+        {
+            await _watcher.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not start the media session watcher", ex);
+        }
+    }
+
     public void ToggleVisibility()
     {
-        if (IsVisible) Hide();
-        else Show();
+        if (IsVisible && Root.Opacity > 0)
+        {
+            _userHidden = true;
+            HideAnimated();
+        }
+        else
+        {
+            _userHidden = false;
+            ShowAnimated();
+        }
+    }
+
+    private void ShowAnimated()
+    {
+        _visibilityVersion++;
+        _autoHideAfter = DateTime.Now + AutoHideGrace;
+        if (!IsVisible)
+        {
+            Root.Opacity = 0;
+            Show();
+        }
+        Root.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(350)) { EasingFunction = Ease });
+    }
+
+    private void HideAnimated()
+    {
+        if (!IsVisible) return;
+        var version = ++_visibilityVersion;
+        var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(300)) { EasingFunction = Ease };
+        fade.Completed += (_, _) =>
+        {
+            if (version == _visibilityVersion) Hide(); // unless it was shown again meanwhile
+        };
+        Root.BeginAnimation(OpacityProperty, fade);
+    }
+
+    /// <summary>Shows the overlay when Spotify starts playing and, with auto-hide on, hides it when it stops.</summary>
+    private void UpdateAutoVisibility()
+    {
+        if (_welcomeOpen) return;
+
+        var active = _spotifyFound && _track is not null && (_isPlaying || DateTime.Now - _pausedSince < AutoHidePause);
+        if (active && _startHidden)
+        {
+            _startHidden = false;
+            if (!_userHidden) ShowAnimated();
+            return;
+        }
+
+        if (!_settings.AutoHide || _startHidden) return;
+
+        if (active && !IsVisible && !_userHidden)
+            ShowAnimated();
+        else if (!active && IsVisible && Root.Opacity > 0 && DateTime.Now > _autoHideAfter && !IsMouseOver && !SettingsPopup.IsOpen)
+            HideAnimated();
+    }
+
+    private void ShowWelcome()
+    {
+        _welcomeOpen = true;
+        if (Height < 320)
+        {
+            Height = 320; // room for the card
+            UpdateCardLayout(Height);
+        }
+        WelcomePanel.Visibility = Visibility.Visible;
+        WelcomePanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(400)) { EasingFunction = Ease });
+    }
+
+    private void OnWelcomeDone(object sender, RoutedEventArgs e)
+    {
+        AutoStart.Enabled = WelcomeStartupSwitch.IsChecked == true;
+        _settings.OnboardingDone = true;
+        _settings.Save();
+        _welcomeOpen = false;
+        _autoHideAfter = DateTime.Now + AutoHideGrace;
+
+        var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(300)) { EasingFunction = Ease };
+        fade.Completed += (_, _) => WelcomePanel.Visibility = Visibility.Collapsed;
+        WelcomePanel.BeginAnimation(OpacityProperty, fade);
+    }
+
+    private void OnSettingsOpened(object? sender, EventArgs e)
+    {
+        _syncingSwitches = true;
+        AutoHideSwitch.IsChecked = _settings.AutoHide;
+        StartupSwitch.IsChecked = AutoStart.Enabled;
+        _syncingSwitches = false;
+    }
+
+    private void OnAutoHideSwitch(object sender, RoutedEventArgs e)
+    {
+        if (!_syncingSwitches) AutoHide = AutoHideSwitch.IsChecked == true;
+    }
+
+    private void OnStartupSwitch(object sender, RoutedEventArgs e)
+    {
+        if (!_syncingSwitches) AutoStart.Enabled = StartupSwitch.IsChecked == true;
     }
 
     public void ResetPosition()
@@ -165,8 +355,10 @@ public partial class MainWindow : Window
         Height = DefaultHeight;
         Left = area.Left + (area.Width - Width) / 2;
         Top = area.Bottom - Height - 80;
+        if (!_footerAnimating) UpdateCardLayout(Height + _footerExtra);
         SaveBounds();
-        Show();
+        _userHidden = false;
+        ShowAnimated();
     }
 
     public void CloseForExit()
@@ -180,6 +372,7 @@ public partial class MainWindow : Window
         base.OnSourceInitialized(e);
         _hwnd = new WindowInteropHelper(this).Handle;
         ApplyWindowStyles();
+        ApplyBackdropBlur();
         HwndSource.FromHwnd(_hwnd)!.AddHook(WndProc);
         RegisterHotkey(HotkeyClickThrough, NativeMethods.VK_L);
         RegisterHotkey(HotkeyToggleVisibility, NativeMethods.VK_K);
@@ -211,22 +404,26 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_settings.Left is null || !IsOnScreen(Left, Top)) ResetPosition();
         ApplyBackdropBlur();
-
-        _renderTimer.Start();
         Render();
+        Dispatcher.BeginInvoke(WarmUpFooter, DispatcherPriority.Background);
+    }
 
-        try
-        {
-            await _watcher.StartAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.Error("Could not start the media session watcher", ex);
-        }
+    /// <summary>
+    /// Builds the footer once, out of sight, so the first hover opens it as quickly as every later one
+    /// (otherwise its buttons and text are created on that first hover).
+    /// </summary>
+    private void WarmUpFooter()
+    {
+        if (_footerAnimating || _footerExtra > 0) return;
+        ScrubberRow.Visibility = Visibility.Visible; // placed below the card, outside the window for now
+        Root.UpdateLayout();
+        _footerHeight = ScrubberRow.ActualHeight + FooterGap + CardPadding;
+        ScrubberRow.Visibility = Visibility.Collapsed;
+        UpdateCardLayout(Height);
     }
 
     private void OnSnapshot(PlaybackSnapshot snapshot)
@@ -234,6 +431,11 @@ public partial class MainWindow : Window
         _spotifyFound = snapshot.SpotifyFound;
         _canSeek = snapshot.CanSeek;
         _canSkip = snapshot.CanSkip;
+        _canShuffle = snapshot.CanShuffle;
+        _canRepeat = snapshot.CanRepeat;
+        _shuffle = snapshot.ShuffleActive;
+        _repeat = snapshot.RepeatMode;
+        UpdateModeButtons();
         if (snapshot.IsPlaying != _isPlaying || EqBars.Tag is null) SetPlaying(snapshot.IsPlaying);
 
         if (snapshot.Track != _track)
@@ -256,6 +458,7 @@ public partial class MainWindow : Window
         if (_track is not null)
             _clock.Update(snapshot.Position, snapshot.SampledAt, snapshot.IsPlaying, snapshot.Duration);
 
+        UpdateAutoVisibility();
         Render();
     }
 
@@ -377,8 +580,8 @@ public partial class MainWindow : Window
     private void UpdateHeader()
     {
         var (title, subtitle) =
-            DateTime.Now < _lockHintUntil ? ("Locked", "Hover over the lyrics to unlock")
-            : !_spotifyFound ? ("Spotify Lyrics Float", "Spotify not detected")
+            DateTime.Now < _hintUntil ? _hint
+            : !_spotifyFound ? ("Floatify", "Spotify not detected")
             : _track is null ? ("Spotify", "Nothing playing")
             : (_track.Title, _track.Artist + (_timeline?.IsApproximate == true ? "  ·  unsynced" : ""));
 
@@ -451,12 +654,13 @@ public partial class MainWindow : Window
 
     private void ShowLyrics(LyricsTimeline timeline, int index)
     {
-        // Before the first line is sung, start from it anyway: it sits in the current spot, at the top.
-        index = Math.Max(index, 0);
+        // Before the first line is sung (index -1), the list already sits on it (ScrollTo clamps to the first
+        // line), but it is styled as an upcoming line; it lights up once singing actually starts.
 
         if (!ReferenceEquals(timeline, _shownTimeline))
         {
             // New lyrics: lay out every line, place the current one, then fade the list in.
+            StopBrowsing();
             _shownTimeline = timeline;
             _shownIndex = index;
             _shownMessage = null;
@@ -474,7 +678,7 @@ public partial class MainWindow : Window
         var duration = index == _shownIndex + 1 ? ScrollDuration(timeline, index) : new Duration(TimeSpan.FromMilliseconds(450));
         _shownIndex = index;
         StyleLines(index, animate: true, duration);
-        ScrollTo(index, animate: true, duration);
+        if (!_manualScroll) ScrollTo(index, animate: true, duration); // while browsing, only the highlight moves
     }
 
     private static string LineText(LyricsTimeline timeline, int index)
@@ -519,7 +723,10 @@ public partial class MainWindow : Window
             };
             item.MouseEnter += OnLineEnter;
             item.MouseLeave += OnLineLeave;
-            item.MouseLeftButtonDown += OnLineClick;
+            item.MouseLeftButtonDown += OnLinePress;
+            item.MouseMove += OnLineDragCheck;
+            item.MouseLeftButtonUp += OnLineRelease;
+            item.MouseRightButtonUp += OnLineSync;
             LinesPanel.Children.Add(item);
         }
 
@@ -550,15 +757,17 @@ public partial class MainWindow : Window
             var text = (TextBlock)item.Child;
             var distance = Math.Abs(i - current);
 
-            // Lines well outside the viewport skip rendering (their blur is the costly part).
-            item.Visibility = distance <= reach ? Visibility.Visible : Visibility.Hidden;
+            // Lines well outside the viewport skip rendering (their blur is the costly part). While browsing,
+            // every line must be drawn, since the view can go anywhere (and browsing uses no blur).
+            item.Visibility = _manualScroll || distance <= reach ? Visibility.Visible : Visibility.Hidden;
 
             // Upcoming lines read more clearly than ones already sung, but stay dimmer than the current line.
             var upcoming = i > current;
             var opacity = distance == 0 ? 1
+                : _manualScroll ? 0.6 // browsing: every line readable, the sung one still brightest
                 : upcoming ? Math.Max(0.22, 0.65 - 0.1 * (distance - 1))
                 : Math.Max(0.1, 0.35 - 0.07 * (distance - 1));
-            var blur = distance == 0 ? 0
+            var blur = distance == 0 || _manualScroll ? 0
                 : upcoming ? Math.Min(4, 0.8 + 0.9 * (distance - 1))
                 : Math.Min(5, 1.5 + 1.1 * (distance - 1));
             var scale = distance == 0 ? 1 : InactiveScale;
@@ -608,9 +817,12 @@ public partial class MainWindow : Window
 
     private void OnLyricsAreaSizeChanged(object sender, SizeChangedEventArgs e)
     {
+        // Sub-pixel changes come from layout rounding, not from the user; don't re-place the lyrics for them.
+        if (Math.Abs(e.NewSize.Width - e.PreviousSize.Width) < 1 && Math.Abs(e.NewSize.Height - e.PreviousSize.Height) < 1) return;
         LinesPanel.Width = e.NewSize.Width;
         if (_shownTimeline is null) return;
         LyricsArea.UpdateLayout(); // the new width can change how lines wrap
+        StopBrowsing();
         StyleLines(_shownIndex, animate: false);
         ScrollTo(_shownIndex, animate: false);
     }
@@ -628,6 +840,7 @@ public partial class MainWindow : Window
 
         // Tall enough for at least three lines clear of the edge fade; taller windows simply show more.
         MinHeight = Math.Ceiling((MinVisibleLines * LineHeightPx + (MinVisibleLines - 1) * LineGapPx) / (1 - 2 * EdgeFade));
+        if (IsLoaded && !_footerAnimating && _footerExtra == 0 && Height < MinHeight) UpdateCardLayout(MinHeight);
 
         if (_shownTimeline is not null)
         {
@@ -674,7 +887,29 @@ public partial class MainWindow : Window
         var position = _clock.Position;
         var duration = _clock.Duration;
         var hasTime = _track is not null && duration > TimeSpan.Zero;
-        ProgressScale.ScaleX = hasTime ? Math.Clamp(position / duration, 0, 1) : 0;
+
+        // While browsing, ease the list toward the scroll target (frame-rate independent smoothing).
+        var now = ((RenderingEventArgs)e).RenderingTime;
+        var dt = Math.Clamp((now - _lastFrameTime).TotalSeconds, 0, 0.05);
+        _lastFrameTime = now;
+
+        if (_footerAnimating)
+        {
+            var t = Math.Clamp((now - _footerStart).TotalMilliseconds / _footerDuration, 0, 1);
+            var eased = Ease.Ease(t);
+            SetFooterExtra(_footerFrom + (_footerTo - _footerFrom) * eased);
+            if (t >= 1) FinishFooterAnimation();
+        }
+        if (_manualScroll)
+        {
+            var y = LinesShift.Y;
+            var gap = _scrollTarget - y;
+            if (Math.Abs(gap) > 0.25) LinesShift.Y = y + gap * (1 - Math.Exp(-dt * 12));
+        }
+        var fraction = !hasTime ? 0 : _scrubbing ? _scrubFraction : Math.Clamp(position / duration, 0, 1);
+        if (_scrubbing) position = duration * fraction; // preview the time being dragged to
+        ProgressScale.ScaleX = fraction;
+        Canvas.SetLeft(ScrubThumb, fraction * ScrubArea.ActualWidth - ScrubThumb.Width / 2);
         SetText(ElapsedText, hasTime ? FormatTime(position) : "");
         SetText(RemainingText, hasTime ? "-" + FormatTime(duration - position) : "");
 
@@ -683,13 +918,15 @@ public partial class MainWindow : Window
     private void SetPlaying(bool playing)
     {
         _isPlaying = playing;
+        if (!playing) _pausedSince = DateTime.Now;
         EqBars.Tag = playing;
 
         // Play/pause icon: shrink away, swap glyph, spring back in.
         var shrink = new DoubleAnimation(0.4, TimeSpan.FromMilliseconds(90));
         shrink.Completed += (_, _) =>
         {
-            PlayIcon.Text = playing ? "" : "";
+            PauseGlyph.Visibility = playing ? Visibility.Visible : Visibility.Collapsed;
+            PlayGlyph.Visibility = playing ? Visibility.Collapsed : Visibility.Visible;
             var grow = new DoubleAnimation(0.4, 1, TimeSpan.FromMilliseconds(420))
             {
                 EasingFunction = new ElasticEase { Oscillations = 1, Springiness = 4, EasingMode = EasingMode.EaseOut },
@@ -712,14 +949,72 @@ public partial class MainWindow : Window
     /// <summary>Fades the header and scrubber in on hover and out again, leaving only the lyrics.</summary>
     private void ShowChrome(bool visible)
     {
-        var fade = TimeSpan.FromMilliseconds(visible ? 220 : 380);
-        foreach (var part in new UIElement[] { HeaderRow, ScrubberRow, TopScrim, BottomScrim })
-            part.BeginAnimation(OpacityProperty, new DoubleAnimation(visible ? 1 : 0, fade) { EasingFunction = Ease });
+        if (visible) PrevButton.IsEnabled = NextButton.IsEnabled = _canSkip;
+        SetFooterOpen(visible); // the footer is revealed and hidden by the window growing and shrinking
+
+        // Appear promptly (ease-out), leave a little more slowly.
+        var fade = TimeSpan.FromMilliseconds(visible ? 180 : 320);
+        IEasingFunction ease = visible ? new QuadraticEase { EasingMode = EasingMode.EaseOut } : Ease;
+        foreach (var part in new UIElement[] { HeaderRow, TopScrim })
+            part.BeginAnimation(OpacityProperty, new DoubleAnimation(visible ? 1 : 0, fade) { EasingFunction = ease });
+    }
+
+    /// <summary>
+    /// Opens or closes the footer section by growing or shrinking the window, so the footer sits below
+    /// the lyrics rather than over them. Near the bottom of the screen the window grows upward instead.
+    /// </summary>
+    private void SetFooterOpen(bool open)
+    {
+        if (!_footerAnimating)
+        {
+            _contentHeight = Height - _footerExtra;
+            if (_footerExtra < 0.5)
+            {
+                _anchorTop = Top;
+                _growUp = false;
+            }
+        }
+
+        double target = 0;
+        if (open)
+        {
+            // Lay the footer out (clipped for now) to learn its height; the card content stays as it is.
+            PlaceCardContent();
+            // Fully visible from the first frame: the growing window reveals it, with no empty gap.
+            ScrubberRow.BeginAnimation(OpacityProperty, null);
+            ScrubberRow.Opacity = 1;
+            ScrubberRow.Visibility = Visibility.Visible;
+            Root.UpdateLayout();
+            target = _footerHeight = ScrubberRow.ActualHeight + FooterGap + CardPadding;
+            if (_footerExtra < 0.5) _growUp = Top + _contentHeight + target > SystemParameters.WorkArea.Bottom;
+        }
+
+        if (!_footerAnimating && Math.Abs(target - _footerExtra) < 0.5) return;
+
+        _footerFrom = _footerExtra;
+        _footerTo = target;
+        _footerDuration = open ? FooterOpenMs : FooterCloseMs;
+        _footerStart = _lastFrameTime;
+        _footerAnimating = true;
+    }
+
+    private void SetFooterExtra(double extra)
+    {
+        _footerExtra = Math.Max(extra, 0);
+        Height = _contentHeight + _footerExtra;
+        if (_growUp) Top = _anchorTop - _footerExtra;
+    }
+
+    private void FinishFooterAnimation()
+    {
+        _footerAnimating = false;
+        SetFooterExtra(_footerTo);
+        if (_footerTo == 0) ScrubberRow.Visibility = Visibility.Collapsed;
+        // The card content keeps its fixed height; UpdateCardLayout adjusts it when the user resizes.
     }
 
     private void ShowToolbar()
     {
-        PrevButton.IsEnabled = NextButton.IsEnabled = _canSkip;
         Toolbar.Visibility = Visibility.Visible;
 
         // Items slide in from the right one after another, overshooting slightly.
@@ -738,15 +1033,19 @@ public partial class MainWindow : Window
     private bool LineIsSeekable(int index) =>
         _canSeek && _shownTimeline is { IsApproximate: false } timeline && index >= 0 && index < timeline.Lines.Count;
 
-    private void SeekToLine(int index, MouseButtonEventArgs e)
+    private void SeekToLine(int index)
     {
         if (!LineIsSeekable(index)) return;
-        e.Handled = true; // don't start a window drag
+        SeekTo(_shownTimeline!.Lines[index].Time - TimeSpan.FromSeconds(CurrentOffset));
+    }
 
-        var target = _shownTimeline!.Lines[index].Time - TimeSpan.FromSeconds(CurrentOffset);
+    private void SeekTo(TimeSpan target)
+    {
+
         if (target < TimeSpan.Zero) target = TimeSpan.Zero;
         // Jump the clock right away; Spotify confirms through its next timeline update.
         _clock.Update(target, DateTimeOffset.Now, _isPlaying, _clock.Duration);
+        ResumeFollow();
         Render();
         _ = _watcher.SeekAsync(target);
     }
@@ -755,15 +1054,127 @@ public partial class MainWindow : Window
         brush.BeginAnimation(SolidColorBrush.ColorProperty,
             new ColorAnimation(to, TimeSpan.FromMilliseconds(millis)) { EasingFunction = Ease });
 
-    private void ChangeOffset(double delta)
+    private void ChangeOffset(double delta) => SetOffset(CurrentOffset + delta);
+
+    private void SetOffset(double seconds)
     {
         if (_track is null) return;
 
-        var value = Math.Round(CurrentOffset + delta, 2);
+        var value = Math.Round(seconds, 2);
         if (Math.Abs(value) < 0.001) _settings.TrackOffsets.Remove(_track.Key);
         else _settings.TrackOffsets[_track.Key] = value;
 
         _settings.Save();
+        Render();
+    }
+
+    /// <summary>Shift held means bigger steps; read from Windows since this window never takes keyboard focus.</summary>
+    private static double OffsetStepNow() =>
+        (NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0 ? LargeOffsetStep : OffsetStep;
+
+    /// <summary>Right-click a line as it is sung: shift this song's lyrics so that line is the one playing now.</summary>
+    private void OnLineSync(object sender, MouseButtonEventArgs e)
+    {
+        if (_track is null || _shownTimeline is null) return;
+        e.Handled = true;
+
+        var line = _shownTimeline.Lines[(int)((Border)sender).Tag];
+        var offset = (line.Time - _clock.Position).TotalSeconds + ReactionLeadSeconds;
+        SetOffset(Math.Round(offset * 20) / 20); // nearest 0.05 s
+        ShowHint("Synced to this line", $"Offset {CurrentOffset:+0.00;-0.00;0.00}s saved for this song", 3);
+    }
+
+    /// <summary>Mouse wheel browses the lyrics; the list stops following the song until told to resume.</summary>
+    private void OnLyricsWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (_shownTimeline is null || LinesPanel.Children.Count == 0 || _welcomeOpen) return;
+        e.Handled = true;
+
+        if (!_manualScroll)
+        {
+            _manualScroll = true;
+            // Take over from wherever the list is (even mid-animation); OnFrame moves it from here on.
+            var y = LinesShift.Y;
+            LinesShift.BeginAnimation(TranslateTransform.YProperty, null);
+            LinesShift.Y = _scrollTarget = y;
+            StyleLines(_shownIndex, animate: true, new Duration(TimeSpan.FromMilliseconds(250)));
+            ShowFollowPill(true);
+        }
+
+        // Wheel input only moves the target; the list glides toward it every frame, so rapid or
+        // high-resolution (touchpad) scrolling stays fluid instead of restarting an animation per notch.
+        var (min, max) = ScrollBounds();
+        _scrollTarget = Math.Clamp(_scrollTarget + e.Delta / 120.0 * (LineHeightPx + LineGapPx) * 0.8, min, max);
+
+        _resumeFollow.Stop();
+        _resumeFollow.Start();
+    }
+
+    /// <summary>
+    /// Browsing range: from the first line resting just below the header to the last line resting just
+    /// above the scrubber. Browsing happens with the cursor over the window, so the header and scrubber
+    /// are showing and would otherwise cover the ends. Short lyrics that fit entirely stay at the top.
+    /// </summary>
+    private (double Min, double Max) ScrollBounds()
+    {
+        var first = (FrameworkElement)LinesPanel.Children[0];
+        var last = (FrameworkElement)LinesPanel.Children[LinesPanel.Children.Count - 1];
+        var height = LyricsArea.ActualHeight;
+        var fade = height * EdgeFade;
+        var top = Math.Max(fade, CardPadding + HeaderRow.ActualHeight + 4);
+        var bottom = fade; // the footer opens below the lyrics, so nothing covers the bottom edge
+
+        var max = top - VisualTreeHelper.GetOffset(first).Y;
+        var min = height - bottom - (VisualTreeHelper.GetOffset(last).Y + last.ActualHeight);
+        return (Math.Min(min, max), max);
+    }
+
+    /// <summary>Glides back to the line being sung and follows the song again.</summary>
+    private void ResumeFollow()
+    {
+        if (!_manualScroll) return;
+        StopBrowsing();
+        if (_shownTimeline is null) return;
+
+        var duration = new Duration(TimeSpan.FromMilliseconds(600));
+        StyleLines(_shownIndex, animate: true, duration);
+        ScrollTo(_shownIndex, animate: true, duration);
+    }
+
+    private void StopBrowsing()
+    {
+        _resumeFollow.Stop();
+        if (!_manualScroll) return;
+        _manualScroll = false;
+        ShowFollowPill(false);
+    }
+
+    private void ShowFollowPill(bool visible)
+    {
+        var duration = TimeSpan.FromMilliseconds(visible ? 300 : 200);
+        if (visible) FollowPill.Visibility = Visibility.Visible;
+
+        var fade = new DoubleAnimation(visible ? 1 : 0, duration) { EasingFunction = Ease };
+        if (!visible) fade.Completed += (_, _) => { if (!_manualScroll) FollowPill.Visibility = Visibility.Collapsed; };
+        FollowPill.BeginAnimation(OpacityProperty, fade);
+        FollowPillShift.BeginAnimation(TranslateTransform.YProperty,
+            new DoubleAnimation(visible ? 12 : 0, visible ? 0 : 8, duration) { EasingFunction = visible ? Spring : Ease });
+    }
+
+    private void OnFollowClick(object sender, RoutedEventArgs e) => ResumeFollow();
+
+    private void OnOffsetReset(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        SetOffset(0);
+        ShowHint("Sync offset reset", "Using the lyrics' own timing", 2);
+    }
+
+    /// <summary>Briefly replaces the header's song info with a short message.</summary>
+    private void ShowHint(string title, string subtitle, double seconds)
+    {
+        _hint = (title, subtitle);
+        _hintUntil = DateTime.Now.AddSeconds(seconds);
         Render();
     }
 
@@ -833,9 +1244,33 @@ public partial class MainWindow : Window
         if (!SettingsPopup.IsOpen) Toolbar.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>Clips the artwork backdrop to the card's rounded corners with smooth (anti-aliased) edges.</summary>
-    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e) =>
+    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // Clip the artwork backdrop to the card's rounded corners with smooth (anti-aliased) edges.
         Root.Clip = new RectangleGeometry(new Rect(e.NewSize), CornerRadius, CornerRadius);
+        // Only a resize by the user changes the card's height. Size events from the footer animation can
+        // arrive after it finishes; treating those as resizes would fold the footer into the card.
+        if (_userSizing && !_footerAnimating) UpdateCardLayout(e.NewSize.Height);
+    }
+
+    /// <summary>
+    /// Pins the lyrics row and the artwork backdrop to fixed heights. Only resizing the window changes
+    /// them; the hover footer opening and closing below never does, so the lyrics stay exactly put.
+    /// </summary>
+    private void UpdateCardLayout(double windowHeight)
+    {
+        _contentHeight = windowHeight - _footerExtra;
+        PlaceCardContent();
+        ArtBackdrop.Height = _contentHeight + _footerHeight;
+    }
+
+    /// <summary>The card content keeps a fixed height; the footer sits directly below it.</summary>
+    private void PlaceCardContent()
+    {
+        var content = Math.Max(0, _contentHeight - CardContent.Margin.Top - CardContent.Margin.Bottom);
+        if (Math.Abs(CardContent.Height - content) >= 0.5 || double.IsNaN(CardContent.Height)) CardContent.Height = content;
+        ScrubberRow.Margin = new Thickness(16, _contentHeight + FooterGap, 16, 0);
+    }
 
     private static string FormatTime(TimeSpan time) => $"{(int)time.TotalMinutes}:{time.Seconds:00}";
 
@@ -861,7 +1296,13 @@ public partial class MainWindow : Window
     {
         switch (msg)
         {
+            case NativeMethods.WM_ENTERSIZEMOVE:
+                _userSizing = true;
+                break;
+
             case NativeMethods.WM_EXITSIZEMOVE: // end of a drag or resize
+                _userSizing = false;
+                if (!_footerAnimating) UpdateCardLayout(Height);
                 SaveBounds();
                 ApplyBackdropBlur();
                 break;
@@ -870,7 +1311,8 @@ public partial class MainWindow : Window
                 if ((int)wParam == HotkeyClickThrough)
                 {
                     ClickThrough = !ClickThrough;
-                    Show();
+                    _userHidden = false;
+                    ShowAnimated();
                 }
                 else if ((int)wParam == HotkeyToggleVisibility)
                 {
@@ -887,7 +1329,7 @@ public partial class MainWindow : Window
         _settings.Left = Left;
         _settings.Top = Top;
         _settings.Width = Width;
-        _settings.Height = Height;
+        _settings.Height = Height - _footerExtra; // remember the lyrics card, not the hover footer
         _settings.Save();
     }
 
@@ -913,6 +1355,13 @@ public partial class MainWindow : Window
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => DragMove();
 
+    private void OnHeaderDrag(object sender, MouseButtonEventArgs e)
+    {
+        // The header sits over the lyrics list; take the press here so it never reaches a line below.
+        e.Handled = true;
+        DragMove();
+    }
+
     private void OnMouseEnter(object sender, MouseEventArgs e)
     {
         if (ClickThrough) return;
@@ -926,9 +1375,9 @@ public partial class MainWindow : Window
         Toolbar.Visibility = Visibility.Collapsed;
     }
 
-    private void OnOffsetDown(object sender, RoutedEventArgs e) => ChangeOffset(-OffsetStep);
+    private void OnOffsetDown(object sender, RoutedEventArgs e) => ChangeOffset(-OffsetStepNow());
 
-    private void OnOffsetUp(object sender, RoutedEventArgs e) => ChangeOffset(OffsetStep);
+    private void OnOffsetUp(object sender, RoutedEventArgs e) => ChangeOffset(OffsetStepNow());
 
     private void OnLockClick(object sender, RoutedEventArgs e) => ClickThrough = true;
 
@@ -942,7 +1391,169 @@ public partial class MainWindow : Window
 
     private void OnPreviousClick(object sender, RoutedEventArgs e) => _ = _watcher.PreviousAsync();
 
-    private void OnLineClick(object sender, MouseButtonEventArgs e) => SeekToLine((int)((Border)sender).Tag, e);
+    private void OnShuffleClick(object sender, RoutedEventArgs e)
+    {
+        _shuffle = !(_shuffle ?? false);
+        UpdateModeButtons(); // show the change at once; Spotify confirms on its next update
+        _ = _watcher.SetShuffleAsync(_shuffle.Value);
+    }
+
+    /// <summary>Cycles repeat the way Spotify does: off, then the whole list, then the current song.</summary>
+    private void OnRepeatClick(object sender, RoutedEventArgs e)
+    {
+        _repeat = _repeat switch
+        {
+            MediaPlaybackAutoRepeatMode.List => MediaPlaybackAutoRepeatMode.Track,
+            MediaPlaybackAutoRepeatMode.Track => MediaPlaybackAutoRepeatMode.None,
+            _ => MediaPlaybackAutoRepeatMode.List,
+        };
+        UpdateModeButtons();
+        _ = _watcher.SetRepeatAsync(_repeat.Value);
+    }
+
+    /// <summary>Shuffle and repeat: green with a dot when on, dimmed and disabled when Spotify doesn't offer them.</summary>
+    private void UpdateModeButtons()
+    {
+        var shuffleOn = _shuffle == true;
+        ShuffleButton.IsEnabled = _canShuffle && _shuffle is not null;
+        ShuffleButton.Foreground = (Brush)FindResource(shuffleOn ? "ModeOn" : "ModeOff");
+        ShuffleDot.Visibility = shuffleOn ? Visibility.Visible : Visibility.Collapsed;
+        SetTip(ShuffleButton, shuffleOn ? "Shuffle: on" : "Shuffle: off");
+
+        var repeatOn = _repeat is MediaPlaybackAutoRepeatMode.List or MediaPlaybackAutoRepeatMode.Track;
+        RepeatButton.IsEnabled = _canRepeat && _repeat is not null;
+        RepeatButton.Foreground = (Brush)FindResource(repeatOn ? "ModeOn" : "ModeOff");
+        RepeatDot.Visibility = repeatOn ? Visibility.Visible : Visibility.Collapsed;
+        RepeatOneBadge.Visibility = _repeat == MediaPlaybackAutoRepeatMode.Track ? Visibility.Visible : Visibility.Collapsed;
+        SetTip(RepeatButton, _repeat switch
+        {
+            MediaPlaybackAutoRepeatMode.List => "Repeat: all",
+            MediaPlaybackAutoRepeatMode.Track => "Repeat: this song",
+            _ => "Repeat: off",
+        });
+    }
+
+    /// <summary>Gives a footer control a tooltip centred just above it (or updates the text of the one it has).</summary>
+    private static void SetTip(FrameworkElement element, object? content)
+    {
+        if (element.ToolTip is ToolTip tip)
+        {
+            tip.Content = content;
+            return;
+        }
+        element.ToolTip = new ToolTip
+        {
+            Content = content,
+            Placement = PlacementMode.Custom,
+            CustomPopupPlacementCallback = (popup, target, _) =>
+                [new CustomPopupPlacement(new Point((target.Width - popup.Width) / 2, -popup.Height - 6), PopupPrimaryAxis.Horizontal)],
+        };
+    }
+
+    private bool CanScrub => _canSeek && _track is not null && _clock.Duration > TimeSpan.Zero;
+
+    private double ScrubFractionAt(MouseEventArgs e) =>
+        Math.Clamp(e.GetPosition(ScrubArea).X / Math.Max(1, ScrubArea.ActualWidth), 0, 1);
+
+    private void OnScrubEnter(object sender, MouseEventArgs e)
+    {
+        if (!CanScrub) return;
+        ScrubArea.Cursor = Cursors.Hand;
+        ShowScrubHover(true);
+        UpdateScrubBubble(ScrubFractionAt(e));
+    }
+
+    private void OnScrubMove(object sender, MouseEventArgs e)
+    {
+        if (!CanScrub) return;
+        var fraction = ScrubFractionAt(e);
+        if (_scrubbing) _scrubFraction = fraction;
+        UpdateScrubBubble(fraction);
+    }
+
+    private void OnScrubLeave(object sender, MouseEventArgs e)
+    {
+        if (!_scrubbing) ShowScrubHover(false);
+    }
+
+    private void OnScrubPress(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true; // a press on the bar never drags the window
+        if (!CanScrub) return;
+        _scrubbing = true;
+        _scrubFraction = ScrubFractionAt(e);
+        ScrubArea.CaptureMouse();
+    }
+
+    private void OnScrubRelease(object sender, MouseButtonEventArgs e)
+    {
+        if (!_scrubbing) return;
+        var target = _clock.Duration * _scrubFraction;
+        _scrubbing = false;
+        ScrubArea.ReleaseMouseCapture();
+        SeekTo(target);
+        if (!ScrubArea.IsMouseOver) ShowScrubHover(false);
+    }
+
+    private void OnScrubCaptureLost(object sender, MouseEventArgs e)
+    {
+        if (!_scrubbing) return;
+        _scrubbing = false; // capture taken away (e.g. focus change): cancel without seeking
+        ShowScrubHover(false);
+    }
+
+    /// <summary>Hovering the bar turns its fill green and shows the knob and the time bubble.</summary>
+    private void ShowScrubHover(bool on)
+    {
+        ScrubFill.Background = on ? (Brush)FindResource("ModeOn") : new SolidColorBrush(Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF));
+        var fade = TimeSpan.FromMilliseconds(on ? 120 : 200);
+        ScrubThumb.BeginAnimation(OpacityProperty, new DoubleAnimation(on ? 1 : 0, fade));
+        ScrubBubble.BeginAnimation(OpacityProperty, new DoubleAnimation(on ? 1 : 0, fade));
+    }
+
+    private void UpdateScrubBubble(double fraction)
+    {
+        SetText(ScrubBubbleText, FormatTime(_clock.Duration * fraction));
+        ScrubBubble.UpdateLayout();
+        var anchor = ScrubArea.TranslatePoint(new Point(fraction * ScrubArea.ActualWidth, 0), ScrubberRow);
+        Canvas.SetLeft(ScrubBubble, anchor.X - ScrubBubble.ActualWidth / 2);
+        Canvas.SetTop(ScrubBubble, anchor.Y - ScrubBubble.ActualHeight - 4);
+    }
+
+    // A press on a lyric line becomes a seek only if it is released without moving; moving past the
+    // system drag threshold turns it into a window drag instead.
+    private Border? _pressedLine;
+    private Point _pressPoint;
+
+    private void OnLinePress(object sender, MouseButtonEventArgs e)
+    {
+        _pressedLine = (Border)sender;
+        _pressPoint = e.GetPosition(this);
+        _pressedLine.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnLineDragCheck(object sender, MouseEventArgs e)
+    {
+        if (_pressedLine is null || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var moved = e.GetPosition(this) - _pressPoint;
+        if (Math.Abs(moved.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(moved.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+        _pressedLine.ReleaseMouseCapture();
+        _pressedLine = null;
+        DragMove();
+    }
+
+    private void OnLineRelease(object sender, MouseButtonEventArgs e)
+    {
+        if (_pressedLine != sender) return;
+        _pressedLine.ReleaseMouseCapture();
+        _pressedLine = null;
+        e.Handled = true;
+        SeekToLine((int)((Border)sender).Tag);
+    }
 
     private void OnLineEnter(object sender, MouseEventArgs e)
     {
@@ -957,5 +1568,9 @@ public partial class MainWindow : Window
         if (((Border)sender).Background is SolidColorBrush brush) AnimateColor(brush, Color.FromArgb(0, 0xFF, 0xFF, 0xFF), 250);
     }
 
-    private void OnHideClick(object sender, RoutedEventArgs e) => Hide();
+    private void OnHideClick(object sender, RoutedEventArgs e)
+    {
+        _userHidden = true;
+        HideAnimated();
+    }
 }

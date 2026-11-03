@@ -10,10 +10,12 @@ internal static partial class NativeMethods
     public const nint WS_EX_NOACTIVATE = 0x08000000;
 
     public const int WM_HOTKEY = 0x0312;
+    public const int WM_ENTERSIZEMOVE = 0x0231;
     public const int WM_EXITSIZEMOVE = 0x0232;
     public const uint MOD_ALT = 0x1;
     public const uint MOD_CONTROL = 0x2;
     public const uint MOD_NOREPEAT = 0x4000;
+    public const int VK_SHIFT = 0x10;
     public const uint VK_K = 0x4B;
     public const uint VK_L = 0x4C;
 
@@ -46,6 +48,9 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetCursorPos(out POINT point);
+
+    [LibraryImport("user32.dll")]
+    public static partial short GetAsyncKeyState(int vKey);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

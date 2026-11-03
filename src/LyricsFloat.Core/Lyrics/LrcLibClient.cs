@@ -36,7 +36,7 @@ public sealed class LrcLibClient(HttpClient http, Func<TimeSpan, CancellationTok
     {
         var http = new HttpClient { BaseAddress = new Uri("https://lrclib.net/"), Timeout = TimeSpan.FromSeconds(10) };
         // LRCLIB asks clients to identify themselves and gives them a higher rate limit for it.
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("SpotifyLyricsFloat/0.1 (personal desktop app)");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Floatify/0.2 (+https://github.com/loremipsumm/Floatify)");
         return http;
     }
 

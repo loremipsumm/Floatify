@@ -25,7 +25,10 @@ Console.WriteLine($"Artist: {props.Artist}");
 Console.WriteLine($"Album : {props.AlbumTitle}");
 var controls = spotify.GetPlaybackInfo().Controls;
 Console.WriteLine($"Controls: playPause={controls.IsPlayPauseToggleEnabled} next={controls.IsNextEnabled} " +
-                  $"previous={controls.IsPreviousEnabled} seek={controls.IsPlaybackPositionEnabled}");
+                  $"previous={controls.IsPreviousEnabled} seek={controls.IsPlaybackPositionEnabled} " +
+                  $"shuffle={controls.IsShuffleEnabled} repeat={controls.IsRepeatEnabled}");
+var info0 = spotify.GetPlaybackInfo();
+Console.WriteLine($"State   : shuffleActive={info0.IsShuffleActive?.ToString() ?? "null"} repeatMode={info0.AutoRepeatMode?.ToString() ?? "null"}");
 Console.WriteLine();
 Console.WriteLine("local time    | status  | position  | lastUpdated   | extrapolated | end");
 

@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using LyricsFloat.Core;
 using Windows.Foundation;
+using Windows.Media;
 using Windows.Media.Control;
 using Windows.Storage.Streams;
 
@@ -15,7 +16,11 @@ public sealed record PlaybackSnapshot(
     TimeSpan Duration,
     bool CanSeek = false,
     bool CanSkip = false,
-    IRandomAccessStreamReference? Artwork = null)
+    IRandomAccessStreamReference? Artwork = null,
+    bool CanShuffle = false,
+    bool CanRepeat = false,
+    bool? ShuffleActive = null,
+    MediaPlaybackAutoRepeatMode? RepeatMode = null)
 {
     public static readonly PlaybackSnapshot NoSpotify = new(false, null, false, TimeSpan.Zero, default, TimeSpan.Zero);
 }
@@ -58,6 +63,10 @@ public sealed class SpotifyWatcher : IDisposable
     public Task PreviousAsync() => SendAsync(s => s.TrySkipPreviousAsync());
 
     public Task SeekAsync(TimeSpan position) => SendAsync(s => s.TryChangePlaybackPositionAsync(position.Ticks));
+
+    public Task SetShuffleAsync(bool on) => SendAsync(s => s.TryChangeShuffleActiveAsync(on));
+
+    public Task SetRepeatAsync(MediaPlaybackAutoRepeatMode mode) => SendAsync(s => s.TryChangeAutoRepeatModeAsync(mode));
 
     private async Task SendAsync(Func<GlobalSystemMediaTransportControlsSession, IAsyncOperation<bool>> command)
     {
@@ -130,6 +139,8 @@ public sealed class SpotifyWatcher : IDisposable
             var props = await session.TryGetMediaPropertiesAsync();
             var playback = session.GetPlaybackInfo();
             var timeline = session.GetTimelineProperties();
+            // Mid track change Windows can briefly hand back nothing; skip this read, the next poll retries.
+            if (playback is null || timeline is null) return;
 
             Updated?.Invoke(new PlaybackSnapshot(
                 SpotifyFound: true,
@@ -140,7 +151,11 @@ public sealed class SpotifyWatcher : IDisposable
                 Duration: timeline.EndTime - timeline.StartTime,
                 CanSeek: playback.Controls.IsPlaybackPositionEnabled,
                 CanSkip: playback.Controls.IsNextEnabled,
-                Artwork: props?.Thumbnail));
+                Artwork: props?.Thumbnail,
+                CanShuffle: playback.Controls.IsShuffleEnabled,
+                CanRepeat: playback.Controls.IsRepeatEnabled,
+                ShuffleActive: playback.IsShuffleActive,
+                RepeatMode: playback.AutoRepeatMode));
         }
         catch (COMException)
         {

@@ -34,6 +34,10 @@ public sealed class TrayIcon : IDisposable
             background.DropDownItems.Add(new Forms.ToolStripMenuItem(label, null, (_, _) => window.Transparency = value) { Tag = value });
         menu.Items.Add(background);
 
+        var autoHide = new Forms.ToolStripMenuItem("Hide when Spotify isn't playing", null,
+            (_, _) => window.AutoHide = !window.AutoHide);
+        menu.Items.Add(autoHide);
+
         menu.Items.Add("Reset position", null, (_, _) => window.ResetPosition());
         menu.Items.Add(new Forms.ToolStripSeparator());
 
@@ -54,6 +58,7 @@ public sealed class TrayIcon : IDisposable
             clickThrough.Checked = window.ClickThrough;
             reconnect.Visible = window.IsWaitingToRetry;
             autoStart.Checked = AutoStart.Enabled;
+            autoHide.Checked = window.AutoHide;
             foreach (Forms.ToolStripMenuItem item in background.DropDownItems)
                 item.Checked = Math.Abs((double)item.Tag! - settings.Transparency) < 0.01;
         };
@@ -61,7 +66,7 @@ public sealed class TrayIcon : IDisposable
         _icon = new Forms.NotifyIcon
         {
             Icon = CreateIcon(),
-            Text = "Spotify Lyrics Float",
+            Text = "Floatify",
             ContextMenuStrip = menu,
             Visible = true,
         };
